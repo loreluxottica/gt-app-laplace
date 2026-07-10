@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ground Truth — Document Splitting</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div id="app">
+    <!-- ── Sidebar: worklist ─────────────────────────────────────────── -->
+    <aside id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">EssilorLuxottica</div>
+        <div class="brand-sub">Laplace · GroundTruth Multidocument</div>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-row">
+          <span id="wl-pending">0</span> pending /
+          <span id="wl-completed">0</span> done
+        </div>
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+      </div>
+
+      <div class="wl-section">
+        <div class="wl-header">PENDING</div>
+        <ul id="list-pending" class="wl-list"></ul>
+      </div>
+      <div class="wl-section">
+        <div class="wl-header">COMPLETED</div>
+        <ul id="list-completed" class="wl-list muted"></ul>
+      </div>
+
+      <div class="sidebar-foot">
+        <a href="/dashboard" class="btn ghost" style="display:block;text-align:center;">📊 Dashboard</a>
+      </div>
+    </aside>
+
+    <!-- ── Main: viewer + controls ───────────────────────────────────── -->
+    <main id="main">
+      <header id="topbar">
+        <div class="file-info">
+          <span id="current-file">Select a file to begin</span>
+          <span id="page-count" class="badge"></span>
+        </div>
+
+        <div class="controls">
+          <label class="switch">
+            <input type="checkbox" id="is-multidoc" />
+            <span>Multi-document</span>
+          </label>
+          <span id="doc-count" class="badge accent">1 document</span>
+          <button id="btn-reset" class="btn ghost" disabled>Reset</button>
+          <button id="btn-save" class="btn primary" disabled>Save &amp; Evaluate</button>
+        </div>
+      </header>
+
+      <div id="viewer">
+        <div id="empty-state" class="empty">
+          <p>Pick a PDF from the left. Click a page to mark it as the <b>first page of a new document</b>. Page 1 is always a start.</p>
+        </div>
+        <div id="pages"></div>
+      </div>
+    </main>
+
+    <!-- ── Evaluation result panel ───────────────────────────────────── -->
+    <div id="eval-panel" class="eval-panel hidden">
+      <div class="eval-card">
+        <div class="eval-head">
+          <span id="eval-title">Saved</span>
+          <button id="eval-close" class="btn ghost tiny">Close</button>
+        </div>
+        <div id="eval-body"></div>
+        <button id="btn-next" class="btn primary">Next file →</button>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

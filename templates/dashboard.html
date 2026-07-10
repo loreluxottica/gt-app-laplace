@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ground Truth — Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body id="dash-body">
+  <div class="dash-top">
+    <div class="dash-brand">
+      <div class="brand-mark">EssilorLuxottica</div>
+      <div class="brand-sub">Laplace · GroundTruth Multidocument — Evaluation Dashboard</div>
+    </div>
+    <div class="dash-actions">
+      <a href="/" class="btn ghost">← Annotation</a>
+      <button id="btn-png" class="btn">Download PNG</button>
+      <button id="btn-html" class="btn primary">Download HTML</button>
+    </div>
+  </div>
+
+  <div class="dash-wrap">
+    <!-- #dash-capture is the snapshot target for PNG/HTML export -->
+    <div id="dash-capture">
+      <div class="dash-title">Multi-document splitting — ground truth vs model</div>
+      <div class="dash-sub" id="dash-generated">—</div>
+      <div id="dash-content"><p class="muted">Loading…</p></div>
+      <div class="dash-foot" id="dash-foot"></div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='vendor/html2canvas.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

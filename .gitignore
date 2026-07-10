@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.log
+.databricks/
+.DS_Store
+
+# Local test-harness data / caches (run_local.py artifacts)
+local_data/
+**/page_cache/
+
+# IDE
+.vscode/
+.idea/
+Thumbs.db

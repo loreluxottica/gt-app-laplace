@@ -1,0 +1,11 @@
+# Ground Truth App — Python dependencies
+
+# Web framework
+Flask>=3.0.0
+gunicorn>=21.2.0
+
+# Databricks access (auto-auth via service principal inside Databricks Apps)
+databricks-sdk>=0.40.0
+
+# PDF page count / sanity (rendering is done client-side by PDF.js)
+pymupdf>=1.24.0

@@ -1,0 +1,32 @@
+# Databricks Apps configuration
+# Docs: https://docs.databricks.com/dev-tools/databricks-apps/
+#
+# The app runs as a service principal; the Databricks SDK auto-authenticates
+# from the injected OAuth credentials. You only need to supply the SQL Warehouse
+# the app should use for table reads/writes, plus the UC catalog/schema.
+
+command: ["gunicorn", "app:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"]
+
+env:
+  # SQL Warehouse used for StatementExecution (tables). Set to your warehouse id.
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "REPLACE_WITH_WAREHOUSE_ID"
+
+  # Unity Catalog location
+  - name: UC_CATALOG
+    value: "sbx-logistics"
+  - name: UC_SCHEMA
+    value: "multidocument-us"
+
+  # Volume sub-paths (under /Volumes/{catalog}/{schema}/)
+  - name: CHECK_VOLUME
+    value: "check"
+  - name: GROUND_TRUTH_VOLUME
+    value: "ground_truth"
+
+# Optionally declare the warehouse as a resource so the app SP gets CAN_USE grant:
+# resources:
+#   - name: sql-warehouse
+#     sql_warehouse:
+#       id: REPLACE_WITH_WAREHOUSE_ID
+#       permission: CAN_USE
