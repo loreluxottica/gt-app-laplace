@@ -4,6 +4,7 @@
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
+  dayId: null,                 // batch being annotated (check/{day_id}/)
   filename: null,
   folderId: null,
   totalPages: 0,
@@ -35,13 +36,16 @@ const el = {
   evalClose: $("eval-close"),
   btnNext: $("btn-next"),
   toast: $("toast"),
+  daySelect: $("day-select"),
 };
 
 // ── API ────────────────────────────────────────────────────────────────────
+const dayQ = () => `day_id=${encodeURIComponent(state.dayId || "")}`;
 const api = {
-  worklist: () => fetch("/api/worklist").then((r) => r.json()),
-  file: (name) => fetch(`/api/file/${encodeURIComponent(name)}`).then((r) => r.json()),
-  pageUrl: (name, n) => `/api/page/${encodeURIComponent(name)}/${n}`,
+  days: () => fetch("/api/days").then((r) => r.json()),
+  worklist: () => fetch(`/api/worklist?${dayQ()}`).then((r) => r.json()),
+  file: (name) => fetch(`/api/file/${encodeURIComponent(name)}?${dayQ()}`).then((r) => r.json()),
+  pageUrl: (name, n) => `/api/page/${encodeURIComponent(name)}/${n}?${dayQ()}`,
   save: (payload) =>
     fetch("/api/save", {
       method: "POST",
@@ -50,8 +54,45 @@ const api = {
     }).then((r) => r.json()),
 };
 
+// ── Batch (day_id) selector ─────────────────────────────────────────────────
+async function loadDays() {
+  const res = await api.days();
+  if (res.error) return toast(`Batches error: ${res.error}`, true);
+  const days = res.days || [];
+  el.daySelect.innerHTML = "";
+  if (!days.length) {
+    el.daySelect.innerHTML = "<option value=''>No batches in check/</option>";
+    return;
+  }
+  days.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = d.day_id;
+    opt.textContent = `${d.day_id}  (${d.n_completed}/${d.n_total} done)`;
+    el.daySelect.appendChild(opt);
+  });
+  // Default: first batch that still has pending files, else the newest.
+  const firstPending = days.find((d) => d.n_completed < d.n_total);
+  state.dayId = (firstPending || days[0]).day_id;
+  el.daySelect.value = state.dayId;
+  loadWorklist();
+}
+
+el.daySelect && (el.daySelect.onchange = () => {
+  if (state.dirty && !confirm("Unsaved changes. Switch batch anyway?")) {
+    el.daySelect.value = state.dayId;
+    return;
+  }
+  state.dayId = el.daySelect.value;
+  state.filename = null;
+  el.currentFile.textContent = "Select a file to begin";
+  el.pages.innerHTML = "";
+  el.emptyState.classList.remove("hidden");
+  loadWorklist();
+});
+
 // ── Worklist ────────────────────────────────────────────────────────────────
 async function loadWorklist(selectFirst = false) {
+  if (!state.dayId) return;
   const wl = await api.worklist();
   if (wl.error) return toast(`Worklist error: ${wl.error}`, true);
 
@@ -213,6 +254,7 @@ async function save() {
 
   const payload = {
     filename: state.filename,
+    day_id: state.dayId,
     folder_id: state.folderId,
     total_pages: state.totalPages,
     predicted_starts: [...state.starts].sort((a, b) => a - b),
@@ -291,4 +333,4 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
-loadWorklist();
+loadDays();

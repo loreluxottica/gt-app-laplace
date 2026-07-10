@@ -17,17 +17,29 @@ from .evaluation import evaluate, aggregate_stats_grouped
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Worklist
+#  Batches (day_id) + Worklist
 # ─────────────────────────────────────────────────────────────────────────────
-def build_worklist() -> dict:
-    """PDFs in check/ split into pending (no GT yet) and done (GT exists)."""
+def list_days() -> list[dict]:
+    """day_id batches = dated subfolders of check/, with annotation progress."""
     vols = get_volumes()
-    check_pdfs = vols.list_pdfs(config.check_path())
-    done = vols.list_json_stems(config.ground_truth_path())
+    days = []
+    for day_id in vols.list_subdirs(config.check_path()):
+        n_total = len(vols.list_pdfs(config.check_path(day_id)))
+        n_done = len(vols.list_json_stems(config.ground_truth_path(day_id)))
+        days.append({"day_id": day_id, "n_total": n_total, "n_completed": n_done})
+    return days
+
+
+def build_worklist(day_id: str) -> dict:
+    """PDFs in check/{day_id}/ split into pending (no GT yet) and done (GT exists)."""
+    vols = get_volumes()
+    check_pdfs = vols.list_pdfs(config.check_path(day_id))
+    done = vols.list_json_stems(config.ground_truth_path(day_id))
 
     pending = [f for f in check_pdfs if f not in done]
     completed = [f for f in check_pdfs if f in done]
     return {
+        "day_id": day_id,
         "pending": pending,
         "completed": completed,
         "n_total": len(check_pdfs),
@@ -39,19 +51,24 @@ def build_worklist() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Model prediction (split_results)
 # ─────────────────────────────────────────────────────────────────────────────
-def get_model_prediction(filename: str) -> dict | None:
-    """Latest split_results row for a filename (by processing_timestamp)."""
+def get_model_prediction(filename: str, day_id: str | None = None) -> dict | None:
+    """Latest split_results row for (day_id, filename). Same filename may exist
+    in several day batches — day_id disambiguates; None falls back to latest."""
     sql = get_sql()
+    day_filter = "AND day_id = :day" if day_id else ""
+    params = [sql.str_param("fname", filename)]
+    if day_id:
+        params.append(sql.str_param("day", day_id))
     rows = sql.execute(
         f"""
         SELECT filename, folder_id, total_pages, predicted_starts,
                n_documents, model_used
         FROM {config.fq_table(config.TABLE_SPLIT_RESULTS)}
-        WHERE filename = :fname
+        WHERE filename = :fname {day_filter}
         ORDER BY processing_timestamp DESC
         LIMIT 1
         """,
-        parameters=[sql.str_param("fname", filename)],
+        parameters=params,
     )
     if not rows:
         return None
@@ -75,14 +92,15 @@ _DOC_CACHE: "OrderedDict[str, fitz.Document]" = OrderedDict()
 _DOC_CACHE_MAX = 4       # keep the last few PDFs open (bytes can be large)
 
 
-def _get_doc(filename: str) -> fitz.Document:
-    if filename in _DOC_CACHE:
-        _DOC_CACHE.move_to_end(filename)
-        return _DOC_CACHE[filename]
+def _get_doc(day_id: str, filename: str) -> fitz.Document:
+    key = f"{day_id}/{filename}"
+    if key in _DOC_CACHE:
+        _DOC_CACHE.move_to_end(key)
+        return _DOC_CACHE[key]
     vols = get_volumes()
-    data = vols.download_bytes(vols.pdf_path(config.check_path(), filename))
+    data = vols.download_bytes(vols.pdf_path(config.check_path(day_id), filename))
     doc = fitz.open(stream=data, filetype="pdf")
-    _DOC_CACHE[filename] = doc
+    _DOC_CACHE[key] = doc
     if len(_DOC_CACHE) > _DOC_CACHE_MAX:
         _, old = _DOC_CACHE.popitem(last=False)
         try:
@@ -92,13 +110,13 @@ def _get_doc(filename: str) -> fitz.Document:
     return doc
 
 
-def page_count(filename: str) -> int:
-    return _get_doc(filename).page_count
+def page_count(day_id: str, filename: str) -> int:
+    return _get_doc(day_id, filename).page_count
 
 
-def render_page_jpeg(filename: str, n: int) -> bytes:
+def render_page_jpeg(day_id: str, filename: str, n: int) -> bytes:
     """Render 1-based page `n` to an RGB JPEG (csRGB avoids CMYK/colorspace glitches)."""
-    page = _get_doc(filename).load_page(n - 1)
+    page = _get_doc(day_id, filename).load_page(n - 1)
     pix = page.get_pixmap(matrix=fitz.Matrix(PAGE_ZOOM, PAGE_ZOOM),
                           colorspace=fitz.csRGB, alpha=False)
     return pix.tobytes("jpeg", jpg_quality=JPEG_QUALITY)
@@ -135,9 +153,9 @@ def get_eval_stats() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Ground truth read / build
 # ─────────────────────────────────────────────────────────────────────────────
-def load_ground_truth(filename: str) -> dict | None:
+def load_ground_truth(day_id: str, filename: str) -> dict | None:
     vols = get_volumes()
-    path = vols.json_path(config.ground_truth_path(), filename)
+    path = vols.json_path(config.ground_truth_path(day_id), filename)
     return vols.read_json(path)
 
 
@@ -148,6 +166,7 @@ def build_gt_payload(
     gt_starts: list[int],
     is_multidoc: bool,
     annotator: str,
+    day_id: str | None = None,
 ) -> dict:
     """Canonical ground-truth JSON. `documents` is derived from starts so future
     versions can attach a `type` per segment without changing the boundary model."""
@@ -158,6 +177,7 @@ def build_gt_payload(
     return {
         "filename": filename,
         "folder_id": folder_id,
+        "day_id": day_id,
         "total_pages": total_pages,
         "is_multidoc": is_multidoc,
         "predicted_starts": starts,        # human ground-truth boundaries
@@ -179,7 +199,8 @@ def _starts_to_documents(starts: list[int], total_pages: int) -> list[dict]:
 
 def save_ground_truth(payload: dict) -> str:
     vols = get_volumes()
-    path = vols.json_path(config.ground_truth_path(), payload["filename"])
+    path = vols.json_path(config.ground_truth_path(payload.get("day_id")),
+                          payload["filename"])
     vols.upload_json(path, payload)
     return path
 
@@ -224,7 +245,7 @@ def _insert_evaluation_row(gt: dict, model: dict | None, ev) -> None:
 
     stmt = f"""
         INSERT INTO {table} (
-            filename, folder_id, total_pages,
+            filename, folder_id, day_id, total_pages,
             gt_starts, gt_n_documents, gt_is_multidoc,
             model_starts, model_n_documents, model_used,
             exact_match,
@@ -234,7 +255,7 @@ def _insert_evaluation_row(gt: dict, model: dict | None, ev) -> None:
             multidoc_correct,
             annotator, annotated_at
         ) VALUES (
-            {_sql_str(gt['filename'])}, {_sql_str(gt.get('folder_id'))}, {gt['total_pages']},
+            {_sql_str(gt['filename'])}, {_sql_str(gt.get('folder_id'))}, {_sql_str(gt.get('day_id'))}, {gt['total_pages']},
             {gt_starts}, {gt['n_documents']}, {'TRUE' if gt['is_multidoc'] else 'FALSE'},
             {model_starts}, {model_n}, {model_used},
             {exact_match},

@@ -34,6 +34,17 @@ class VolumeClient:
             return []
         return sorted(names)
 
+    def list_subdirs(self, volume_path: str) -> list[str]:
+        """Return names of directories directly under volume_path (e.g. day_id batches)."""
+        dirs = []
+        try:
+            for entry in self._w.files.list_directory_contents(volume_path):
+                if entry.is_directory:
+                    dirs.append(posixpath.basename(entry.path.rstrip("/")))
+        except NotFound:
+            return []
+        return sorted(dirs, reverse=True)  # newest batch first
+
     def list_json_stems(self, volume_path: str) -> set[str]:
         """Return set of filenames (without .json) present under volume_path."""
         stems: set[str] = set()

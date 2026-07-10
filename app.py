@@ -1,9 +1,13 @@
 """Ground Truth App — Flask backend.
 
+Batches: PDFs live in dated volumes (check/{day_id}/, ground_truth/{day_id}/).
+All file routes take a ?day_id= query parameter selecting the batch.
+
 Routes
   GET  /                      annotation UI
   GET  /dashboard            evaluation dashboard
-  GET  /api/worklist         pending / completed PDFs from check/
+  GET  /api/days             available day_id batches + annotation progress
+  GET  /api/worklist         pending / completed PDFs from check/{day_id}/
   GET  /api/file/<name>      page count + existing GT (operator-blind: NO model)
   GET  /api/page/<name>/<n>  server-rendered JPEG of one PDF page
   GET  /api/stats            aggregate metrics for the dashboard
@@ -34,6 +38,12 @@ def _valid_name(name: str) -> bool:
     return bool(name) and bool(_SAFE_NAME.match(name)) and ".." not in name
 
 
+def _day_id():
+    """Validated day_id from the query string (the batch being annotated)."""
+    day = request.args.get("day_id", "").strip()
+    return day if _valid_name(day) else None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/")
 def index():
@@ -45,10 +55,22 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.get("/api/days")
+def days():
+    try:
+        return jsonify({"days": annotation.list_days()})
+    except Exception as e:  # noqa: BLE001
+        app.logger.exception("days failed")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.get("/api/worklist")
 def worklist():
+    day = _day_id()
+    if not day:
+        return jsonify({"error": "day_id query parameter required"}), 400
     try:
-        return jsonify(annotation.build_worklist())
+        return jsonify(annotation.build_worklist(day))
     except Exception as e:  # noqa: BLE001
         app.logger.exception("worklist failed")
         return jsonify({"error": str(e)}), 500
@@ -56,15 +78,19 @@ def worklist():
 
 @app.get("/api/file/<name>")
 def file_detail(name: str):
+    day = _day_id()
     if not _valid_name(name):
         return jsonify({"error": "invalid filename"}), 400
+    if not day:
+        return jsonify({"error": "day_id query parameter required"}), 400
     try:
         # Operator-blind: never return the model prediction. total_pages comes from
         # the PDF itself; existing GT (if any) is returned for re-annotation.
-        gt = annotation.load_ground_truth(name)
+        gt = annotation.load_ground_truth(day, name)
         return jsonify({
             "filename": name,
-            "total_pages": annotation.page_count(name),
+            "day_id": day,
+            "total_pages": annotation.page_count(day, name),
             "folder_id": name.split("_")[0],
             "ground_truth": gt,
         })
@@ -75,12 +101,15 @@ def file_detail(name: str):
 
 @app.get("/api/page/<name>/<int:n>")
 def page_image(name: str, n: int):
+    day = _day_id()
     if not _valid_name(name):
         return jsonify({"error": "invalid filename"}), 400
+    if not day:
+        return jsonify({"error": "day_id query parameter required"}), 400
     try:
-        if n < 1 or n > annotation.page_count(name):
+        if n < 1 or n > annotation.page_count(day, name):
             return jsonify({"error": "page out of range"}), 404
-        jpeg = annotation.render_page_jpeg(name, n)
+        jpeg = annotation.render_page_jpeg(day, name, n)
         resp = Response(jpeg, mimetype="image/jpeg")
         resp.headers["Cache-Control"] = "public, max-age=3600"
         return resp
@@ -107,8 +136,11 @@ def dashboard():
 def save():
     body = request.get_json(silent=True) or {}
     name = body.get("filename", "")
+    day = (body.get("day_id") or "").strip()
     if not _valid_name(name):
         return jsonify({"error": "invalid filename"}), 400
+    if not _valid_name(day):
+        return jsonify({"error": "day_id required in body"}), 400
 
     starts = body.get("predicted_starts")
     is_multidoc = bool(body.get("is_multidoc", False))
@@ -116,7 +148,7 @@ def save():
         return jsonify({"error": "predicted_starts must be a non-empty list"}), 400
 
     try:
-        model = annotation.get_model_prediction(name)
+        model = annotation.get_model_prediction(name, day)
 
         # total_pages / folder_id: trust the request (from the loaded PDF), fall
         # back to the model row when available.
@@ -132,6 +164,7 @@ def save():
             gt_starts=[int(x) for x in starts],
             is_multidoc=is_multidoc,
             annotator=_annotator(),
+            day_id=day,
         )
         gt_path = annotation.save_ground_truth(payload)
         metrics = annotation.run_and_store_evaluation(payload, model)

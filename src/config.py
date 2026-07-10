@@ -31,12 +31,16 @@ class Config:
         return f"/Volumes/{cls.CATALOG}/{cls.SCHEMA}/{volume}"
 
     @classmethod
-    def check_path(cls) -> str:
-        return cls.volume_path(cls.CHECK_VOLUME)
+    def check_path(cls, day_id: str | None = None) -> str:
+        """check/ volume; dated subfolder check/{day_id}/ when a batch is given."""
+        base = cls.volume_path(cls.CHECK_VOLUME)
+        return f"{base}/{day_id}" if day_id else base
 
     @classmethod
-    def ground_truth_path(cls) -> str:
-        return cls.volume_path(cls.GROUND_TRUTH_VOLUME)
+    def ground_truth_path(cls, day_id: str | None = None) -> str:
+        """ground_truth/ volume; dated subfolder ground_truth/{day_id}/ when given."""
+        base = cls.volume_path(cls.GROUND_TRUTH_VOLUME)
+        return f"{base}/{day_id}" if day_id else base
 
     # Table names
     TABLE_SPLIT_RESULTS = "split_results"
