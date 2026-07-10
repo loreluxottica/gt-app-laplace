@@ -3,70 +3,144 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
-# DBTITLE 1,Config
-# ══════════════════════════════════════════════════════════════════════
-# nb_check_export — ZIP dei file in check/ + predizioni del modello
-# ══════════════════════════════════════════════════════════════════════
-# Per ogni PDF nel volume check/:
-#   - aggiunge il PDF originale allo ZIP
-#   - aggiunge un JSON con le predizioni del modello da split_results
-#     (predicted_starts, n_documents, model_used, verification_applied)
-# Output: /Volumes/.../check/check_export_YYYYMMDD.zip
-# ══════════════════════════════════════════════════════════════════════
-import os, json
-from datetime import datetime
-
-CATALOG = "sbx-logistics"
-SCHEMA  = "multidocument-us"
-
-CHECK_PATH   = f"/Volumes/{CATALOG}/{SCHEMA}/check"
-TABLE_SPLIT  = f"`{CATALOG}`.`{SCHEMA}`.`split_results`"
-
-RUN_DATE  = datetime.now().strftime("%Y%m%d")
-OUT_ZIP   = f"{CHECK_PATH}/check_export_{RUN_DATE}.zip"
-
-print(f"Source:  {CHECK_PATH}/")
-print(f"Output:  {OUT_ZIP}")
+# DBTITLE 1,Load shared helpers
+# MAGIC %run ./nb_helpers
 
 # COMMAND ----------
 
-# DBTITLE 1,Carica predizioni del modello
-# ── Tutti i PDF in check/ ──
+# DBTITLE 1,Config
+# ══════════════════════════════════════════════════════════════════════
+# nb_check_export — Annotation sample + export ZIP (annotation gate入口)
+# ══════════════════════════════════════════════════════════════════════
+# Task 3 (final) of job_ingest (parse → split → check_export).
+# 1. Samples sample_pct% of the batch's split files (seeded random —
+#    a rerun picks the same sample) and copies the PDFs from
+#    inbox/{day_id}/ to check/{day_id}/ for the ground-truth app.
+# 2. Builds check/{day_id}/check_export_{day_id}.zip with each PDF +
+#    its model prediction JSON, excluding files already annotated in
+#    ground_truth/{day_id}/.
+# 3. Emits the 'awaiting_annotation' batch event — the control tower
+#    gate opens here and job_deliver stays locked until every sampled
+#    file is annotated.
+# ══════════════════════════════════════════════════════════════════════
+import os, json, random
+from datetime import datetime
+
+TABLE_SPLIT = f"`{CATALOG}`.`{SCHEMA}`.`split_results`"
+
+# ── Batch + run identity (job parameters) ──
+DAY_ID = get_day_id()
+RUN_ID = get_run_id()
+PATHS = volume_paths(DAY_ID)
+INBOX_PATH = PATHS["inbox"]
+CHECK_PATH = PATHS["check"]
+GT_PATH = PATHS["ground_truth"]
+
+# ── Annotation sample % (job parameter, user picks per batch in the UI) ──
+dbutils.widgets.text("sample_pct", "10")
+try:
+    SAMPLE_PCT = float(dbutils.widgets.get("sample_pct"))
+except ValueError:
+    raise ValueError("Widget 'sample_pct' must be a number between 1 and 100")
+if not (0 < SAMPLE_PCT <= 100):
+    raise ValueError(f"sample_pct={SAMPLE_PCT} out of range (1-100)")
+
+OUT_ZIP = f"{CHECK_PATH}/check_export_{DAY_ID}.zip"
+
+events = EventLogger(RUN_ID, DAY_ID, stage="check_export")
+events.log("run_started", detail=f"sample_pct={SAMPLE_PCT}")
+events.flush()
+
+print(f"Day ID:      {DAY_ID}")
+print(f"Sample:      {SAMPLE_PCT}%")
+print(f"Check dir:   {CHECK_PATH}/")
+print(f"Output ZIP:  {OUT_ZIP}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Sample files for annotation (seeded, idempotent)
+# ── Files of this batch that have a split prediction ──
+split_filenames = [
+    r["filename"] for r in
+    spark.sql(f"SELECT filename FROM {TABLE_SPLIT} WHERE day_id = '{DAY_ID}'").collect()
+]
+
+if not split_filenames:
+    events.log("run_completed", new_status="NO_SPLIT_RESULTS")
+    events.flush()
+    print("⚠️  Nessun split_results per questo batch. Esegui prima nb_split_documents.")
+    dbutils.notebook.exit("NO_SPLIT_RESULTS")
+
+# Seeded by day_id → same sample on rerun (idempotent, reproducible)
+rng = random.Random(f"check-sample-{DAY_ID}")
+sample_size = max(1, round(len(split_filenames) * SAMPLE_PCT / 100))
+check_sample = sorted(rng.sample(sorted(split_filenames),
+                                 min(sample_size, len(split_filenames))))
+
+print(f"Batch files with predictions: {len(split_filenames)}")
+print(f"Annotation sample ({SAMPLE_PCT}%):  {len(check_sample)} file → check/{DAY_ID}/")
+
+os.makedirs(CHECK_PATH, exist_ok=True)
+n_copied, n_already, n_copy_err = 0, 0, 0
+for fname in check_sample:
+    src = f"{INBOX_PATH}/{fname}.pdf"
+    dst = f"{CHECK_PATH}/{fname}.pdf"
+    if os.path.exists(dst):
+        n_already += 1
+        continue
+    try:
+        dbutils.fs.cp(src, dst)
+        n_copied += 1
+    except Exception as e:
+        n_copy_err += 1
+        events.log("error", filename=fname,
+                   error_message=f"check copy failed: {str(e)[:300]}")
+        print(f"  ⚠️  Copy failed for {fname}: {e}")
+
+events.flush()
+print(f"✓ Copied {n_copied} (already present {n_already}, errors {n_copy_err})")
+
+# COMMAND ----------
+
+# DBTITLE 1,Load model predictions (temp-view join, no IN-clause)
 all_pdf_files = [f for f in os.listdir(CHECK_PATH) if f.endswith(".pdf")]
 if not all_pdf_files:
-    print("⚠️  Nessun PDF trovato in check/. Esegui prima nb_parse_documents.")
+    events.log("run_completed", new_status="NO_FILES_IN_CHECK")
+    events.flush()
+    print("⚠️  Nessun PDF in check/. Terminazione.")
     dbutils.notebook.exit("NO_FILES_IN_CHECK")
 
-# ── Escludi file già annotati (ground truth presente in ground_truth/) ──
-GT_PATH     = f"/Volumes/{CATALOG}/{SCHEMA}/ground_truth"
-gt_annotated = {os.path.splitext(f)[0] for f in os.listdir(GT_PATH) if f.endswith(".json")}
+# ── Escludi file già annotati (ground truth presente in ground_truth/{day_id}/) ──
+gt_annotated = set()
+if os.path.exists(GT_PATH):
+    gt_annotated = {os.path.splitext(f)[0] for f in os.listdir(GT_PATH) if f.endswith(".json")}
 
-pdf_files       = [f for f in all_pdf_files if os.path.splitext(f)[0] not in gt_annotated]
-already_done    = [f for f in all_pdf_files if os.path.splitext(f)[0] in gt_annotated]
-filenames       = [os.path.splitext(f)[0] for f in pdf_files]
+pdf_files    = [f for f in all_pdf_files if os.path.splitext(f)[0] not in gt_annotated]
+already_done = [f for f in all_pdf_files if os.path.splitext(f)[0] in gt_annotated]
+filenames    = [os.path.splitext(f)[0] for f in pdf_files]
 
-print(f"PDF totali in check/:        {len(all_pdf_files)}")
+print(f"PDF totali in check/{DAY_ID}/:  {len(all_pdf_files)}")
 print(f"  ✓ Già annotati (esclusi):  {len(already_done)}")
 print(f"  → Da annotare (nel ZIP):   {len(pdf_files)}")
 
 if not pdf_files:
+    events.log("run_completed", new_status="ALL_ANNOTATED")
+    events.flush()
     print("✓ Tutti i file sono già stati annotati. Nessun ZIP da creare.")
     dbutils.notebook.exit("ALL_ANNOTATED")
 
-# ── Recupera predizioni del modello per i file da annotare ──
+# ── Predizioni via temp-view join (filenames mai interpolati nella SQL) ──
+spark.createDataFrame([(f,) for f in filenames], "filename STRING") \
+    .createOrReplaceTempView("_check_filenames")
 df_preds = spark.sql(f"""
-    SELECT
-        filename,
-        folder_id,
-        total_pages,
-        n_documents,
-        predicted_starts,
-        model_used,
-        fallback_used,
-        verification_applied,
-        processing_timestamp
-    FROM {TABLE_SPLIT}
-    WHERE filename IN ({','.join(f"'{f}'" for f in filenames)})
+    SELECT s.filename, s.folder_id, s.total_pages, s.n_documents,
+           s.predicted_starts, s.model_used, s.fallback_used,
+           s.verification_applied, s.processing_timestamp,
+           COALESCE(s.needs_review, false) AS needs_review,
+           s.boundary_source
+    FROM {TABLE_SPLIT} s
+    JOIN _check_filenames c ON s.filename = c.filename
+    WHERE s.day_id = '{DAY_ID}'
 """).collect()
 
 preds_by_filename = {row["filename"]: row for row in df_preds}
@@ -82,9 +156,9 @@ if n_no_pred:
 # DBTITLE 1,Crea ZIP
 import zipfile, shutil
 
-TMP_ZIP = f"/tmp/check_export_{RUN_DATE}.zip"
+TMP_ZIP = f"/tmp/check_export_{DAY_ID}.zip"
 
-# Rimuovi zip precedente dello stesso giorno se esiste
+# Rimuovi zip precedente dello stesso batch se esiste
 if os.path.exists(OUT_ZIP):
     os.remove(OUT_ZIP)
     print(f"ZIP precedente rimosso: {OUT_ZIP}")
@@ -96,10 +170,9 @@ n_skipped    = 0
 # Scrivi prima in /tmp (supporta seek), poi copia sul volume UC
 with zipfile.ZipFile(TMP_ZIP, "w", compression=zipfile.ZIP_DEFLATED) as zf:
     for pdf_file in sorted(pdf_files):
-        filename   = os.path.splitext(pdf_file)[0]
-        pdf_path   = f"{CHECK_PATH}/{pdf_file}"
+        filename = os.path.splitext(pdf_file)[0]
+        pdf_path = f"{CHECK_PATH}/{pdf_file}"
 
-        # ── Aggiungi PDF ──
         if os.path.exists(pdf_path):
             zf.write(pdf_path, arcname=pdf_file)
             n_pdf_added += 1
@@ -108,29 +181,32 @@ with zipfile.ZipFile(TMP_ZIP, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             n_skipped += 1
             continue
 
-        # ── Aggiungi JSON con predizioni ──
         row = preds_by_filename.get(filename)
         if row:
             pred_dict = {
                 "filename":             filename,
                 "folder_id":            row["folder_id"],
+                "day_id":               DAY_ID,
                 "total_pages":          row["total_pages"],
                 "n_documents":          row["n_documents"],
                 "predicted_starts":     list(row["predicted_starts"]),
                 "model_used":           row["model_used"],
                 "fallback_used":        row["fallback_used"],
                 "verification_applied": row["verification_applied"],
+                "needs_review":         row["needs_review"],
+                "boundary_source":      row["boundary_source"],
                 "processed_at":         str(row["processing_timestamp"])
             }
         else:
             pred_dict = {
                 "filename":    filename,
+                "day_id":      DAY_ID,
                 "note":        "not_yet_processed",
                 "predicted_starts": None
             }
 
-        json_name = f"{filename}_prediction.json"
-        zf.writestr(json_name, json.dumps(pred_dict, indent=2, ensure_ascii=False))
+        zf.writestr(f"{filename}_prediction.json",
+                    json.dumps(pred_dict, indent=2, ensure_ascii=False))
         n_json_added += 1
 
 # Copia da /tmp al volume UC
@@ -138,6 +214,14 @@ shutil.copy2(TMP_ZIP, OUT_ZIP)
 os.remove(TMP_ZIP)
 
 zip_size_mb = os.path.getsize(OUT_ZIP) / (1024 * 1024)
+
+# ── The annotation gate opens here ──
+events.log("awaiting_annotation",
+           detail=f"n_sampled={len(all_pdf_files)} to_annotate={len(pdf_files)} "
+                  f"already_annotated={len(already_done)} sample_pct={SAMPLE_PCT}")
+events.log("run_completed", new_status="success",
+           detail=f"zip={OUT_ZIP} pdf={n_pdf_added} json={n_json_added}")
+events.flush()
 
 print(f"\n{'═' * 55}")
 print(f"  ZIP creato: {OUT_ZIP}")
@@ -147,27 +231,10 @@ print(f"  JSON aggiunti: {n_json_added}")
 if n_skipped:
     print(f"  Skippati:      {n_skipped}")
 print(f"{'=' * 55}")
-print(f"\nPuoi scaricarlo da: Catalog → Volumes → {CATALOG}/{SCHEMA}/check/")
+print(f"\nAnnotation gate OPEN: annotate {len(pdf_files)} file in the Ground Truth app.")
+print(f"job_deliver stays locked until every sampled file has a ground_truth JSON.")
 
-# COMMAND ----------
-
-# DBTITLE 1,Verifica contenuto ZIP
-# ── Mostra i contenuti dello ZIP per verifica ──
-with zipfile.ZipFile(OUT_ZIP, "r") as zf:
-    names = sorted(zf.namelist())
-
-pdfs  = [n for n in names if n.endswith(".pdf")]
-jsons = [n for n in names if n.endswith(".json")]
-
-print(f"Totale file nello ZIP: {len(names)} ({len(pdfs)} PDF + {len(jsons)} JSON)")
-print(f"\nEsempio (primi 5):")
-for name in names[:10]:
-    info = zf.getinfo(name) if False else None  # solo listing
-    print(f"  {name}")
-
-# Mostra un esempio di JSON per verifica
-if jsons:
-    with zipfile.ZipFile(OUT_ZIP, "r") as zf:
-        sample = json.loads(zf.read(jsons[0]))
-    print(f"\nEsempio JSON ({jsons[0]}):")
-    print(json.dumps(sample, indent=2, ensure_ascii=False)[:600])
+dbutils.notebook.exit(
+    f'{{"run_id": "{RUN_ID}", "day_id": "{DAY_ID}", "status": "awaiting_annotation", '
+    f'"n_sampled": {len(all_pdf_files)}, "to_annotate": {len(pdf_files)}}}'
+)

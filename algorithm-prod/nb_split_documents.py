@@ -3,29 +3,27 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+# DBTITLE 1,Load shared helpers
+# MAGIC %run ./nb_helpers
+
+# COMMAND ----------
+
 # DBTITLE 1,Config
 # ══════════════════════════════════════════════════════════════════════
 # nb_split_documents — Production GCS Document Boundary Detection
 # ══════════════════════════════════════════════════════════════════════
-# Task 2 of the multi-document splitting job.
-# Reads parsed PDFs, extracts features, runs GCS segmentation with
-# LLM (Sonnet primary, Maverick fallback), verification pass,
-# writes boundary results to split_results.
+# Task 2 of job_ingest (parse → split → check_export).
+# Reads parsed PDFs of the day_id batch, extracts features, runs GCS
+# segmentation with LLM (Sonnet primary, Maverick fallback),
+# verification pass, writes boundary results to split_results.
+# Every result carries boundary_source; total LLM failures are tagged
+# needs_review=true so they can never be delivered unsplit silently.
 # ══════════════════════════════════════════════════════════════════════
 
-import uuid, json, re, time
+import json, re, time
 from datetime import datetime
 
-# ── Schema & Paths ──
-CATALOG = "sbx-logistics"
-SCHEMA = "multidocument-us"
-
-# Temp Delta storage (cleaned up at end of run)
-TMP_BASE = f"abfss://logistics@elddaapsbxsdlsd07.dfs.core.windows.net/{CATALOG}/{SCHEMA}/tmp"
-
-# ── Tables ──
 TABLE_PARSED = f"`{CATALOG}`.`{SCHEMA}`.`parsed_documents`"
-TABLE_LOG = f"`{CATALOG}`.`{SCHEMA}`.`processing_log`"
 TABLE_PAGE_SIGNALS = f"`{CATALOG}`.`{SCHEMA}`.`page_signals`"
 TABLE_PKG_SUMMARIES = f"`{CATALOG}`.`{SCHEMA}`.`package_summaries`"
 TABLE_LLM_RESPONSES = f"`{CATALOG}`.`{SCHEMA}`.`gcs_llm_responses`"
@@ -43,18 +41,24 @@ MAX_TOKENS_S = 500   # Token budget: ≤30 pages
 MAX_TOKENS_M = 800   # Token budget: 31-60 pages
 MAX_TOKENS_L = 2000  # Token budget: >60 pages
 
-# ── Run ID (shared with Task 1 via job parameter) ──
-try:
-    RUN_ID = dbutils.widgets.get("run_id")
-except:
-    RUN_ID = str(uuid.uuid4())
+# ── Batch + run identity (job parameters) ──
+DAY_ID = get_day_id()
+RUN_ID = get_run_id()
+
+# Temp Delta storage, per-batch so concurrent day_ids never collide
+# (cleaned up at end of run ONLY on success — kept for the recovery cell otherwise)
+TMP_BASE = f"abfss://logistics@elddaapsbxsdlsd07.dfs.core.windows.net/{CATALOG}/{SCHEMA}/tmp/{DAY_ID}"
 
 RUN_START = datetime.now()
+events = EventLogger(RUN_ID, DAY_ID, stage="split")
+events.log("run_started")
+events.flush()
 
 print(f"{'═' * 60}")
 print(f"  nb_split_documents — Production Run")
 print(f"{'═' * 60}")
 print(f"  Run ID:       {RUN_ID}")
+print(f"  Day ID:       {DAY_ID}")
 print(f"  Started:      {RUN_START:%Y-%m-%d %H:%M:%S}")
 print(f"  Primary LLM:  {PRIMARY_MODEL}")
 print(f"  Fallback LLM: {FALLBACK_MODEL}")
@@ -149,21 +153,24 @@ print(f"{'═' * 60}")
 # COMMAND ----------
 
 # DBTITLE 1,Load parsed documents (unprocessed only)
-# ── Load parsed documents not yet split ──
+# ── Load parsed documents of THIS batch not yet split (key: day_id + filename) ──
 from pyspark.sql.functions import col
 
-# Get filenames already in split_results
-df_already_split = spark.sql(f"SELECT filename FROM {TABLE_SPLIT_RESULTS}")
+df_already_split = spark.sql(
+    f"SELECT filename FROM {TABLE_SPLIT_RESULTS} WHERE day_id = '{DAY_ID}'"
+)
 
-# Load parsed documents and exclude already-split ones
 df_parsed = (
-    spark.sql(f"SELECT filename, folder_id, n_pages, parsed_content FROM {TABLE_PARSED}")
+    spark.sql(f"SELECT filename, folder_id, n_pages, parsed_content FROM {TABLE_PARSED} "
+              f"WHERE day_id = '{DAY_ID}'")
     .join(df_already_split, on="filename", how="left_anti")
 )
 
 n_to_split = df_parsed.count()
 
 if n_to_split == 0:
+    events.log("run_completed", new_status="NO_FILES_TO_SPLIT")
+    events.flush()
     print("ℹ️  No new parsed documents to split. Early termination.")
     dbutils.notebook.exit("NO_FILES_TO_SPLIT")
 
@@ -244,13 +251,19 @@ SELECT
     'text_start: ', LEFT(pt.full_text, 300), '\n',
     'text_end: ', RIGHT(pt.full_text, 300)
   ) AS page_block,
-  '{RUN_ID}' AS run_id
+  '{RUN_ID}' AS run_id,
+  '{DAY_ID}' AS day_id
 FROM page_text pt
 JOIN max_pages mp ON pt.filename = mp.filename
 LEFT JOIN first_hdrs fh ON pt.filename = fh.filename AND pt.page_num = fh.page_num
-""".replace("{RUN_ID}", RUN_ID))
+""".replace("{RUN_ID}", RUN_ID).replace("{DAY_ID}", DAY_ID))
 
-# Write to UC table
+# Delete-before-append: a rerun must not duplicate this batch's page signals
+spark.sql(f"""
+    DELETE FROM {TABLE_PAGE_SIGNALS}
+    WHERE day_id = '{DAY_ID}'
+      AND filename IN (SELECT filename FROM parsed_docs)
+""")
 df_page_signals.write.format("delta").mode("append").saveAsTable(
     f"`{CATALOG}`.`{SCHEMA}`.`page_signals`"
 )
@@ -296,10 +309,16 @@ df_pkg_final = (
         on="filename"
     )
     .withColumn("run_id", lit(RUN_ID))
+    .withColumn("day_id", lit(DAY_ID))
 )
 
-# Write to UC table
-df_pkg_final.select("filename", "folder_id", "total_pages", "package_summary", "run_id") \
+# Delete-before-append: a rerun must not duplicate this batch's summaries
+spark.sql(f"""
+    DELETE FROM {TABLE_PKG_SUMMARIES}
+    WHERE day_id = '{DAY_ID}'
+      AND filename IN (SELECT filename FROM parsed_docs)
+""")
+df_pkg_final.select("filename", "folder_id", "total_pages", "package_summary", "run_id", "day_id") \
     .write.format("delta").mode("append").saveAsTable(
         f"`{CATALOG}`.`{SCHEMA}`.`package_summaries`"
     )
@@ -470,7 +489,8 @@ df_log_primary = df_parsed_primary.select(
     col("parsed_starts"),
     lit(False).alias("is_fallback"),
     current_timestamp().alias("processing_timestamp"),
-    lit(RUN_ID).alias("run_id")
+    lit(RUN_ID).alias("run_id"),
+    lit(DAY_ID).alias("day_id")
 )
 df_log_primary.write.format("delta").mode("append").saveAsTable(
     f"`{CATALOG}`.`{SCHEMA}`.`gcs_llm_responses`"
@@ -483,7 +503,10 @@ print(f"✓ Primary responses logged to gcs_llm_responses")
 # ── Stage 3b: Retry failures with Maverick ──
 if n_failures == 0:
     print("✓ No failures — fallback not needed.")
-    df_all_parsed = df_successes.select("filename", "total_pages", "parsed_starts", "token_bucket")
+    df_all_parsed = (
+        df_successes.select("filename", "total_pages", "parsed_starts", "token_bucket")
+        .withColumn("boundary_source", lit("primary"))
+    )
 else:
     print(f"Retrying {n_failures} failures with {FALLBACK_MODEL}...")
     
@@ -544,7 +567,8 @@ else:
         col("parsed_starts"),
         lit(True).alias("is_fallback"),
         current_timestamp().alias("processing_timestamp"),
-        lit(RUN_ID).alias("run_id")
+        lit(RUN_ID).alias("run_id"),
+        lit(DAY_ID).alias("day_id")
     )
     df_log_fallback.write.format("delta").mode("append").saveAsTable(
         f"`{CATALOG}`.`{SCHEMA}`.`gcs_llm_responses`"
@@ -554,23 +578,32 @@ else:
     df_fallback_ok = df_fallback_parsed.filter(
         (col("error_message").isNull()) & (col("parsed_starts").isNotNull())
     )
-    # Ultimate failures: fallback to [1] (treat as single doc)
+    # Ultimate failures: fallback to [1] BUT tagged needs_review — a package that
+    # defeated both models must never be delivered unsplit silently.
     df_ultimate_failures = df_fallback_parsed.filter(
         (col("error_message").isNotNull()) | (col("parsed_starts").isNull())
     ).withColumn("parsed_starts", array(lit(1)))
-    
+
     n_fallback_ok = df_fallback_ok.count()
     n_ultimate_fail = df_ultimate_failures.count()
-    print(f"  Maverick results: {n_fallback_ok} recovered, {n_ultimate_fail} ultimate failures (→ [1])")
-    
-    # Combine all results
+    print(f"  Maverick results: {n_fallback_ok} recovered, {n_ultimate_fail} ultimate failures (→ [1], needs_review)")
+
+    for r in df_ultimate_failures.select("filename").collect():
+        events.log("needs_review", filename=r["filename"],
+                   detail="both LLMs failed — [1] fallback, delivery blocked until approved")
+    events.flush()
+
+    # Combine all results, tracking where each boundary set came from
     df_all_parsed = (
         df_successes.select("filename", "total_pages", "parsed_starts", "token_bucket")
+        .withColumn("boundary_source", lit("primary"))
         .unionByName(
             df_fallback_ok.select("filename", "total_pages", "parsed_starts", "token_bucket")
+            .withColumn("boundary_source", lit("fallback"))
         )
         .unionByName(
             df_ultimate_failures.select("filename", "total_pages", "parsed_starts", "token_bucket")
+            .withColumn("boundary_source", lit("ultimate_fallback"))
         )
     )
     print(f"✓ Fallback complete")
@@ -695,18 +728,39 @@ else:
         .groupBy("filename", "total_pages")
         .agg(sort_array(array_union(collect_set("boundary"), spark_array(lit(1)))).alias("parsed_starts"))
         .withColumn("token_bucket", lit("L"))
+        .withColumn("boundary_source", lit("chunked"))
     )
-    
+
+    # Reconciliation: a large PDF whose chunk calls ALL failed would vanish from
+    # df_large_merged (explode of NULL drops the rows) and stay 'parsed' forever.
+    # Give it [1] + needs_review instead — no file may disappear.
+    df_large_missing = (
+        df_large_pdfs.select("filename", "total_pages")
+        .join(df_large_merged.select("filename"), on="filename", how="left_anti")
+        .withColumn("parsed_starts", spark_array(lit(1)))
+        .withColumn("token_bucket", lit("L"))
+        .withColumn("boundary_source", lit("ultimate_fallback"))
+    )
+    n_large_missing = df_large_missing.count()
+    if n_large_missing > 0:
+        for r in df_large_missing.select("filename").collect():
+            events.log("needs_review", filename=r["filename"],
+                       detail="all chunk LLM calls failed — [1] fallback, delivery blocked until approved")
+        events.flush()
+        print(f"  ⚠️  {n_large_missing} large PDFs lost all chunks → [1] + needs_review")
+
     # Combine with single-call results
+    cols = ["filename", "total_pages", "parsed_starts", "token_bucket", "boundary_source"]
     df_all_with_large = (
-        df_all_parsed.select("filename", "total_pages", "parsed_starts", "token_bucket")
-        .unionByName(df_large_merged.select("filename", "total_pages", "parsed_starts", "token_bucket"))
+        df_all_parsed.select(*cols)
+        .unionByName(df_large_merged.select(*cols))
+        .unionByName(df_large_missing.select(*cols))
     )
     df_all_with_large.write.format("delta").mode("overwrite").save(f"{TMP_BASE}/gcs_parsed_with_large")
     df_all_with_large = spark.read.format("delta").load(f"{TMP_BASE}/gcs_parsed_with_large")
     df_all_with_large.createOrReplaceTempView("gcs_parsed")
     df_all_parsed = df_all_with_large
-    
+
     print(f"  ✓ Chunked merge complete: {df_large_merged.count()} large PDFs added")
     print(f"  Total GCS parsed: {df_all_parsed.count()} PDFs")
 
@@ -823,7 +877,8 @@ df_log_verify = df_verify_raw.select(
     lit(None).cast(ArrayType(_IntTypeLog())).alias("parsed_starts"),
     lit(False).alias("is_fallback"),
     current_timestamp().alias("processing_timestamp"),
-    lit(RUN_ID).alias("run_id")
+    lit(RUN_ID).alias("run_id"),
+    lit(DAY_ID).alias("day_id")
 )
 df_log_verify.write.format("delta").mode("append").saveAsTable(
     f"`{CATALOG}`.`{SCHEMA}`.`gcs_llm_responses`"
@@ -919,9 +974,12 @@ df_model_info = spark.sql(f"""
         MAX(CASE WHEN is_fallback = true THEN model_used ELSE NULL END) AS fallback_model,
         MAX(CASE WHEN is_fallback = false THEN model_used ELSE NULL END) AS primary_model
     FROM `{CATALOG}`.`{SCHEMA}`.`gcs_llm_responses`
-    WHERE run_id = '{RUN_ID}'
+    WHERE run_id = '{RUN_ID}' AND day_id = '{DAY_ID}'
     GROUP BY filename
 """)
+
+# boundary_source per file (primary / fallback / chunked / ultimate_fallback)
+df_source = spark.sql("SELECT filename, boundary_source FROM gcs_parsed")
 
 df_results = (
     spark.sql("SELECT filename, predicted_starts FROM final_boundaries")
@@ -930,6 +988,7 @@ df_results = (
         on="filename"
     )
     .join(df_model_info, on="filename", how="left")
+    .join(df_source, on="filename", how="left")
     .select(
         col("filename"),
         col("folder_id"),
@@ -941,7 +1000,10 @@ df_results = (
         col("fallback_used").alias("fallback_used"),
         lit(True).alias("verification_applied"),
         current_timestamp().alias("processing_timestamp"),
-        lit(RUN_ID).alias("run_id")
+        lit(RUN_ID).alias("run_id"),
+        lit(DAY_ID).alias("day_id"),
+        (col("boundary_source") == "ultimate_fallback").alias("needs_review"),
+        col("boundary_source"),
     )
 )
 
@@ -955,20 +1017,23 @@ df_results_mat.write.format("delta").mode("append").saveAsTable(
 )
 print(f"✓ {n_results} entries written to split_results")
 
-# Update processing_log: status = done
-# NOTA: match solo su filename + status='parsed' (processing_log usa run_id di nb_parse, diverso da RUN_ID di nb_split)
+# Update processing_log: status = done (key: day_id + filename; run_id stamped)
 spark.sql(f"""
     MERGE INTO {TABLE_LOG} AS log
     USING (
         SELECT filename, size(predicted_starts) AS n_documents
         FROM final_boundaries
     ) AS fb
-    ON log.filename = fb.filename
+    ON log.day_id = '{DAY_ID}' AND log.filename = fb.filename
     WHEN MATCHED AND log.status = 'parsed' THEN UPDATE SET
         log.status = 'done',
         log.n_documents_found = fb.n_documents,
-        log.completed_at = current_timestamp()
+        log.completed_at = current_timestamp(),
+        log.run_id = '{RUN_ID}'
 """)
+events.log("status_change", old_status="parsed", new_status="done",
+           detail=f"{n_results} files split")
+events.flush()
 print(f"✓ processing_log updated: status='done'")
 
 # COMMAND ----------
@@ -980,13 +1045,13 @@ from datetime import datetime
 RUN_END = datetime.now()
 run_duration_min = (RUN_END - RUN_START).total_seconds() / 60
 
-# Stats
+# Stats for this batch
 stats_log = spark.sql(f"""
     SELECT
         SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
         SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errored
     FROM {TABLE_LOG}
-    WHERE run_id = '{RUN_ID}'
+    WHERE day_id = '{DAY_ID}'
 """).first()
 
 run_status = "success" if (stats_log['errored'] or 0) == 0 else "partial_failure"
@@ -997,10 +1062,7 @@ try:
 except Exception:
     JOB_RUN_ID = None
 
-n_to_split = 0
 job_run_id_sql = f"'{JOB_RUN_ID}'" if JOB_RUN_ID else "NULL"
-
-
 
 spark.sql(f"""
     INSERT INTO {TABLE_RUN_HISTORY} VALUES (
@@ -1016,16 +1078,24 @@ spark.sql(f"""
         '{PRIMARY_MODEL}',
         '{FALLBACK_MODEL}',
         {run_duration_min:.2f},
-        NULL
+        'day_id={DAY_ID}'
     )
 """)
 
-# Cleanup temp Delta (if any)
-try:
-    dbutils.fs.rm(TMP_BASE, recurse=True)
-    print(f"Temp cleanup: {TMP_BASE} removed")
-except:
-    pass
+events.log("run_completed", new_status=run_status,
+           detail=f"split={n_results} done={stats_log['done'] or 0} errored={stats_log['errored'] or 0}")
+events.flush()
+
+# Cleanup temp Delta ONLY on success — on failure the materializations are
+# needed by the RECOVERY cell to resume without re-invoking the LLM.
+if run_status == "success":
+    try:
+        dbutils.fs.rm(TMP_BASE, recurse=True)
+        print(f"Temp cleanup: {TMP_BASE} removed")
+    except Exception as e:
+        print(f"⚠️  Temp cleanup failed (non-fatal): {e}")
+else:
+    print(f"⚠️  run_status={run_status} — TMP_BASE kept for recovery: {TMP_BASE}")
 
 print(f"\n{'═' * 60}")
 print(f"  SPLIT RUN SUMMARY")
@@ -1040,4 +1110,4 @@ print(f"  Fallback LLM: {FALLBACK_MODEL}")
 print(f"  Fallbacks:    {n_failures if 'n_failures' in dir() else 0}")
 print(f"{'═' * 60}")
 
-dbutils.notebook.exit(f'{{"run_id": "{RUN_ID}", "status": "{run_status}", "split": {stats_log["done"] or 0}}}')
+dbutils.notebook.exit(f'{{"run_id": "{RUN_ID}", "day_id": "{DAY_ID}", "status": "{run_status}", "split": {stats_log["done"] or 0}}}')
