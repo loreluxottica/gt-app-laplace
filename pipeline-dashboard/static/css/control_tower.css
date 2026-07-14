@@ -1,0 +1,276 @@
+/* Control Tower — theme roles from the validated reference palette.
+   Light is default; dark via prefers-color-scheme. Status colors are the
+   reserved status palette and always ship with an icon + label. */
+
+:root {
+  color-scheme: light;
+  --page:        #f9f9f7;
+  --surface:     #fcfcfb;
+  --ink:         #0b0b0b;
+  --ink-2:       #52514e;
+  --muted:       #898781;
+  --grid:        #e1e0d9;
+  --baseline:    #c3c2b7;
+  --border:      rgba(11, 11, 11, 0.10);
+  --accent:      #2a78d6;   /* categorical slot 1 (blue) */
+  --accent-2:    #1baf7a;   /* slot 2 (aqua) */
+  /* status palette — reserved, never reused as series */
+  --good:        #0ca30c;
+  --warning:     #fab219;
+  --serious:     #ec835a;
+  --critical:    #d03b3b;
+  /* ordinal funnel ramp (blue steps 250→650, surface-safe) */
+  --f1: #86b6ef; --f2: #5598e7; --f3: #3987e5; --f4: #256abf; --f5: #1c5cab; --f6: #104281;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page:      #0d0d0d;
+    --surface:   #1a1a19;
+    --ink:       #ffffff;
+    --ink-2:     #c3c2b7;
+    --muted:     #898781;
+    --grid:      #2c2c2a;
+    --baseline:  #383835;
+    --border:    rgba(255, 255, 255, 0.10);
+    --accent:    #3987e5;
+    --accent-2:  #199e70;
+    --f1: #184f95; --f2: #1c5cab; --f3: #256abf; --f4: #2a78d6; --f5: #3987e5; --f6: #5598e7;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.mono { font-family: ui-monospace, Consolas, monospace; }
+.muted { color: var(--muted); font-size: 12.5px; }
+.hidden { display: none !important; }
+
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+#topbar {
+  display: flex; align-items: center; gap: 20px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--grid);
+  position: sticky; top: 0; z-index: 10;
+  flex-wrap: wrap;
+}
+.brand-mark { font-weight: 700; letter-spacing: 0.2px; }
+.brand-sub { color: var(--muted); font-size: 12px; margin-left: 8px; }
+#tabs { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+.tab {
+  border: none; background: none; color: var(--ink-2);
+  padding: 7px 12px; border-radius: 6px; cursor: pointer; font: inherit;
+}
+.tab:hover { background: var(--grid); }
+.tab.active { background: var(--accent); color: #fff; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+#day-select {
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--ink); font: inherit;
+}
+.poll-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--baseline); display: inline-block;
+}
+.poll-dot.live { background: var(--good); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+/* ── Panels ──────────────────────────────────────────────────────────── */
+#main { padding: 18px 22px 60px; max-width: 1280px; margin: 0 auto; }
+.panel { display: none; }
+.panel.active { display: block; }
+.panel-head { display: flex; align-items: baseline; gap: 14px; margin: 6px 0 14px; flex-wrap: wrap; }
+.panel-head h2 { margin: 0; font-size: 18px; }
+.panel-sub h3 { font-size: 13px; color: var(--ink-2); margin: 22px 0 8px; }
+.loading { color: var(--muted); padding: 30px 0; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 13px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.ghost { background: none; }
+.btn.tiny { padding: 3px 8px; font-size: 12px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Status badges (icon + label — color never alone) ────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); color: var(--ink-2); background: var(--surface);
+}
+.badge::before { content: "●"; font-size: 9px; color: var(--baseline); }
+.badge.uploaded::before             { color: var(--muted); }
+.badge.parsing::before              { color: var(--f2); }
+.badge.predicted::before            { color: var(--f3); }
+.badge.awaiting_annotation::before  { color: var(--warning); }
+.badge.annotated::before            { color: var(--accent-2); }
+.badge.delivering::before           { color: var(--f4); }
+.badge.delivered::before            { color: var(--good); }
+.badge.error::before, .badge.unknown::before { color: var(--critical); }
+.badge.err {
+  border-color: var(--critical); color: var(--critical);
+}
+.badge.err::before { content: "⚠"; font-size: 11px; color: var(--critical); }
+
+/* ── Batch list ──────────────────────────────────────────────────────── */
+.batch-list { display: flex; flex-direction: column; gap: 10px; }
+.batch-card {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--grid);
+  border-radius: 10px; padding: 14px 18px;
+}
+.batch-card .day { font-size: 16px; font-weight: 700; min-width: 110px; }
+.batch-card .counts { color: var(--ink-2); font-size: 12.5px; display: flex; gap: 14px; flex-wrap: wrap; }
+.batch-card .counts b { color: var(--ink); }
+.batch-card .spacer { flex: 1; }
+.batch-actions { display: flex; gap: 8px; }
+
+/* ── Funnel (live flow) ──────────────────────────────────────────────── */
+.funnel {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0;
+  background: var(--surface);
+  border: 1px solid var(--grid); border-radius: 10px;
+  padding: 22px 14px 18px;
+  overflow-x: auto;
+}
+.stage { position: relative; text-align: center; padding: 0 8px; }
+.stage + .stage::before {         /* connector line between stages */
+  content: ""; position: absolute; left: -34px; top: 34px;
+  width: 68px; height: 2px; background: var(--grid);
+}
+.stage .bubble {
+  width: 68px; height: 68px; margin: 0 auto; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; font-weight: 700; color: #fff;
+  position: relative; z-index: 1;
+  border: 2px solid var(--surface);      /* 2px surface ring */
+  transition: transform 0.25s ease;
+}
+.stage.bumped .bubble { transform: scale(1.12); }
+.stage .lbl { margin-top: 8px; font-size: 12px; color: var(--ink-2); font-weight: 600; }
+.stage .sub { font-size: 11px; color: var(--muted); }
+.stage .errs {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 4px; font-size: 11.5px; font-weight: 700; color: var(--critical);
+}
+/* ordinal ramp across the six stages */
+.stage:nth-child(1) .bubble { background: var(--f1); }
+.stage:nth-child(2) .bubble { background: var(--f2); }
+.stage:nth-child(3) .bubble { background: var(--f3); }
+.stage:nth-child(4) .bubble { background: var(--f4); }
+.stage:nth-child(5) .bubble { background: var(--f5); }
+.stage:nth-child(6) .bubble { background: var(--f6); }
+
+/* flowing token animation while a job is active */
+.stage .flow-token {
+  position: absolute; top: 31px; left: -34px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); opacity: 0;
+}
+.funnel.running .stage.flowing .flow-token {
+  animation: flow 1.4s ease-in-out infinite;
+}
+@keyframes flow {
+  0%   { opacity: 0; transform: translateX(0); }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(60px); }
+}
+
+/* ── Event feed ──────────────────────────────────────────────────────── */
+.event-feed { display: flex; flex-direction: column; gap: 4px; }
+.event-row {
+  display: grid; grid-template-columns: 150px 90px 130px 1fr;
+  gap: 10px; padding: 5px 10px; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--grid);
+  font-size: 12.5px; align-items: baseline;
+}
+.event-row .ts { color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+.event-row .etype { font-weight: 600; }
+.event-row.err .etype { color: var(--critical); }
+.event-row .fname { font-family: ui-monospace, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Gate ────────────────────────────────────────────────────────────── */
+.gate-card {
+  background: var(--surface); border: 1px solid var(--grid);
+  border-radius: 10px; padding: 18px 20px; max-width: 720px;
+}
+.gate-bar {
+  height: 10px; border-radius: 5px; background: var(--grid);
+  overflow: hidden; margin: 10px 0 6px;
+}
+.gate-bar .fill { height: 100%; background: var(--accent-2); transition: width 0.4s ease; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
+.metric {
+  background: var(--page); border: 1px solid var(--grid); border-radius: 8px;
+  padding: 10px 12px; text-align: center;
+}
+.metric .m-val { display: block; font-size: 19px; font-weight: 700; }
+.metric .m-lbl { font-size: 11px; color: var(--muted); }
+.missing-list { columns: 3; font-size: 12px; margin-top: 10px; font-family: ui-monospace, Consolas, monospace; }
+
+/* ── Tables ──────────────────────────────────────────────────────────── */
+.tbl-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--grid); }
+th { color: var(--muted); font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; position: sticky; top: 0; background: var(--surface); }
+tr:last-child td { border-bottom: none; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--page); }
+td.reason { color: var(--serious); max-width: 380px; }
+td .fname { font-family: ui-monospace, Consolas, monospace; }
+
+/* ── Filters row ─────────────────────────────────────────────────────── */
+.filter-row { display: flex; gap: 8px; align-items: center; }
+.filter-row input[type="search"], .filter-row select, .dlg-form input {
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--ink); font: inherit;
+}
+
+/* ── File detail drawer ──────────────────────────────────────────────── */
+.file-detail {
+  margin-top: 16px; background: var(--surface);
+  border: 1px solid var(--grid); border-radius: 10px; padding: 16px 18px;
+}
+.file-detail h3 { margin: 0 0 8px; font-family: ui-monospace, Consolas, monospace; }
+.file-detail pre {
+  background: var(--page); border: 1px solid var(--grid); border-radius: 6px;
+  padding: 10px; font-size: 11.5px; overflow-x: auto; max-height: 260px;
+}
+
+/* ── Dialogs ─────────────────────────────────────────────────────────── */
+dialog {
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); color: var(--ink);
+  padding: 22px 24px; min-width: 380px; max-width: 520px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.dlg-form h3 { margin: 0 0 6px; }
+.dlg-form label { display: block; margin: 14px 0 4px; font-size: 13px; color: var(--ink-2); }
+.dlg-form input { width: 100%; margin-top: 4px; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.deferred-list {
+  max-height: 160px; overflow-y: auto; font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  border: 1px solid var(--grid); border-radius: 6px; padding: 8px 10px; margin-top: 8px;
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: var(--page);
+  padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 100;
+  max-width: 70vw;
+}
+.toast.error { background: var(--critical); color: #fff; }

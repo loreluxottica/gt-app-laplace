@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Control Tower — Multidocument Pipeline</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/control_tower.css') }}" />
+</head>
+<body>
+  <div id="app">
+    <!-- ── Top bar ─────────────────────────────────────────────────────── -->
+    <header id="topbar">
+      <div class="brand">
+        <span class="brand-mark">EssilorLuxottica</span>
+        <span class="brand-sub">Laplace · Multidocument Control Tower</span>
+      </div>
+      <nav id="tabs">
+        <button class="tab active" data-tab="batches">Batches</button>
+        <button class="tab" data-tab="flow">Live Flow</button>
+        <button class="tab" data-tab="gate">Annotation Gate</button>
+        <button class="tab" data-tab="errors">Errors</button>
+        <button class="tab" data-tab="sftp">SFTP</button>
+        <button class="tab" data-tab="review">Review</button>
+        <button class="tab" data-tab="files">Files</button>
+      </nav>
+      <div class="topbar-right">
+        <select id="day-select" title="Batch (day_id)"></select>
+        <span id="poll-dot" class="poll-dot" title="Live polling"></span>
+      </div>
+    </header>
+
+    <!-- ── Panels ──────────────────────────────────────────────────────── -->
+    <main id="main">
+
+      <!-- Batches (home) -->
+      <section id="panel-batches" class="panel active">
+        <div class="panel-head">
+          <h2>Batches</h2>
+          <span class="muted">inbox/{day_id}/ folders and their journey. The uploader creates the folder; everything else runs from here.</span>
+        </div>
+        <div id="batch-list" class="batch-list"><div class="loading">Loading…</div></div>
+      </section>
+
+      <!-- Live flow -->
+      <section id="panel-flow" class="panel">
+        <div class="panel-head">
+          <h2>Live Flow — <span id="flow-day" class="mono"></span></h2>
+          <span id="flow-runstate" class="muted"></span>
+        </div>
+        <div id="funnel" class="funnel"></div>
+        <div class="panel-sub">
+          <h3>Latest events</h3>
+          <div id="flow-events" class="event-feed"></div>
+        </div>
+      </section>
+
+      <!-- Annotation gate -->
+      <section id="panel-gate" class="panel">
+        <div class="panel-head">
+          <h2>Annotation Gate — <span id="gate-day" class="mono"></span></h2>
+        </div>
+        <div id="gate-body"></div>
+      </section>
+
+      <!-- Errors -->
+      <section id="panel-errors" class="panel">
+        <div class="panel-head">
+          <h2>Errors &amp; stuck files</h2>
+          <span class="muted">Every failure is documented — nothing is silent. Requeue from here.</span>
+        </div>
+        <div id="errors-body"></div>
+      </section>
+
+      <!-- SFTP -->
+      <section id="panel-sftp" class="panel">
+        <div class="panel-head">
+          <h2>SFTP delivery</h2>
+        </div>
+        <div id="sftp-body"></div>
+      </section>
+
+      <!-- Review -->
+      <section id="panel-review" class="panel">
+        <div class="panel-head">
+          <h2>Needs review</h2>
+          <span class="muted">Both LLMs failed on these packages — they would be delivered UNSPLIT. Approve or requeue.</span>
+        </div>
+        <div id="review-body"></div>
+      </section>
+
+      <!-- Files -->
+      <section id="panel-files" class="panel">
+        <div class="panel-head">
+          <h2>Files</h2>
+          <div class="filter-row">
+            <input id="file-q" type="search" placeholder="Search filename / folder…" />
+            <select id="file-status">
+              <option value="">any status</option>
+              <option>pending</option><option>parsing</option><option>parsed</option>
+              <option>done</option><option>error</option><option>skipped</option>
+              <option>manual</option><option>delivered</option><option>failed</option>
+              <option>deferred</option>
+            </select>
+            <button id="file-search" class="btn">Search</button>
+          </div>
+        </div>
+        <div id="files-body"></div>
+        <div id="file-detail" class="file-detail hidden"></div>
+      </section>
+    </main>
+
+    <!-- ── Dialogs ─────────────────────────────────────────────────────── -->
+    <dialog id="dlg-ingest">
+      <form method="dialog" class="dlg-form">
+        <h3>Run ingest — <span id="dlg-ingest-day" class="mono"></span></h3>
+        <p class="muted">Parse → split predictions → annotation sample. The batch then waits at the annotation gate.</p>
+        <label>Annotation sample %
+          <input id="dlg-sample-pct" type="number" min="1" max="100" step="1" value="10" />
+        </label>
+        <div class="dlg-actions">
+          <button value="cancel" class="btn ghost">Cancel</button>
+          <button id="dlg-ingest-go" value="ok" class="btn primary">Launch job_ingest</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-deliver">
+      <form method="dialog" class="dlg-form">
+        <h3>Split &amp; upload — <span id="dlg-deliver-day" class="mono"></span></h3>
+        <p class="muted">Ground truth overrides predictions where annotated. Type the SFTP destination for THIS delivery — it is validated on the server before anything uploads.</p>
+        <label>SFTP remote path
+          <input id="dlg-sftp-path" type="text" placeholder="/Laplace/LAPLACE/US/20260714" spellcheck="false" />
+        </label>
+        <div class="dlg-actions">
+          <button value="cancel" class="btn ghost">Cancel</button>
+          <button id="dlg-deliver-go" value="ok" class="btn primary">Launch job_deliver</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-redeliver">
+      <form method="dialog" class="dlg-form">
+        <h3>Re-deliver deferred — <span id="dlg-redeliver-day" class="mono"></span></h3>
+        <p class="muted">Files skipped because their remote folder was missing. They reset to pending and upload to the NEW path below.</p>
+        <div id="dlg-redeliver-list" class="deferred-list"></div>
+        <label>New SFTP remote path
+          <input id="dlg-redeliver-path" type="text" placeholder="/Laplace/LAPLACE/US/other-folder" spellcheck="false" />
+        </label>
+        <div class="dlg-actions">
+          <button value="cancel" class="btn ghost">Cancel</button>
+          <button id="dlg-redeliver-go" value="ok" class="btn primary">Re-deliver</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script>window.GT_APP_URL = {{ gt_app_url | tojson }};</script>
+  <script src="{{ url_for('static', filename='js/control_tower.js') }}"></script>
+</body>
+</html>
