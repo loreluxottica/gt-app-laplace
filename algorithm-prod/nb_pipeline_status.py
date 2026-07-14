@@ -4,182 +4,153 @@
 # environment_version = "5"
 # ///
 # DBTITLE 1,Config
-CATALOG        = "sbx-logistics"
-SCHEMA         = "multidocument-us"
-TOTAL_EXPECTED = 2438  # file originali in inbox
+# ══════════════════════════════════════════════════════════════════════
+# nb_pipeline_status — Pipeline monitor (read-only)
+# ══════════════════════════════════════════════════════════════════════
+# Thin wrapper over the shared SQL views (sql/views.sql) — the same
+# definitions the control-tower app reads. Optional day_id widget
+# focuses on one batch; empty = all batches.
+# The control tower (pipeline-dashboard/) supersedes this notebook for
+# day-to-day operations; this stays as an in-workspace quick check.
+# ══════════════════════════════════════════════════════════════════════
+
+CATALOG = "sbx-logistics"
+SCHEMA = "multidocument-us"
+
+dbutils.widgets.text("day_id", "")
+DAY_ID = dbutils.widgets.get("day_id").strip()
+DAY_FILTER = f"WHERE day_id = '{DAY_ID}'" if DAY_ID else ""
+
+spark.sql(f"USE CATALOG `{CATALOG}`")
+spark.sql(f"USE SCHEMA `{SCHEMA}`")
+
+print(f"Batch filter: {DAY_ID or '(all batches)'}")
 
 # COMMAND ----------
 
-# DBTITLE 1,Stato pipeline per file distinti
-# Per ogni filename prende l'entry più avanzata nel pipeline
-# (status_rank: done > parsed > parsing > error > skipped > pending)
-df_status = spark.sql(f"""
-    WITH ranked AS (
-        SELECT *,
-            ROW_NUMBER() OVER (
-                PARTITION BY filename
-                ORDER BY
-                    CASE status
-                        WHEN 'done'    THEN 1
-                        WHEN 'parsed'  THEN 2
-                        WHEN 'parsing' THEN 3
-                        WHEN 'error'   THEN 4
-                        WHEN 'skipped' THEN 5
-                        ELSE 6
-                    END
-            ) AS rn
-        FROM `{CATALOG}`.`{SCHEMA}`.`processing_log`
-    )
-    SELECT
-        status,
-        sftp_delivery_status,
-        COUNT(*) AS n_files
-    FROM ranked
-    WHERE rn = 1
-    GROUP BY status, sftp_delivery_status
-    ORDER BY
-        CASE status WHEN 'done' THEN 1 WHEN 'parsed' THEN 2
-                    WHEN 'parsing' THEN 3 WHEN 'error' THEN 4
-                    WHEN 'skipped' THEN 5 ELSE 6 END,
-        sftp_delivery_status NULLS LAST
+# DBTITLE 1,Batch overview (v_batch_status)
+df_batches = spark.sql(f"""
+    SELECT day_id, lifecycle, has_errors,
+           n_files, n_pending, n_parsing, n_parsed, n_predicted,
+           n_sftp_pending, n_delivered, n_sftp_failed, n_deferred,
+           n_error, n_skipped, n_manual, n_needs_review,
+           last_event_ts
+    FROM v_batch_status
+    {DAY_FILTER}
+    ORDER BY day_id DESC
 """)
-display(df_status)
+display(df_batches)
 
 # COMMAND ----------
 
-# DBTITLE 1,Riepilogo avanzamento
-rows = df_status.collect()
+# DBTITLE 1,ASCII progress per batch
+rows = df_batches.collect()
 
-# Aggrega
-totals = {}
-for r in rows:
-    key = (r["status"], r["sftp_delivery_status"])
-    totals[key] = r["n_files"]
+for b in rows:
+    total = b["n_files"] or 0
+    done = (b["n_delivered"] or 0)
+    predicted = ((b["n_predicted"] or 0) + (b["n_sftp_pending"] or 0) + done
+                 + (b["n_sftp_failed"] or 0) + (b["n_deferred"] or 0))
+    bar_len = 40
 
-n_distinct = spark.sql(f"""
-    SELECT COUNT(DISTINCT filename) AS n
-    FROM `{CATALOG}`.`{SCHEMA}`.`processing_log`
-""").first()["n"]
+    def bar(n):
+        filled = int(bar_len * n / total) if total else 0
+        return "█" * filled + "░" * (bar_len - filled)
 
-n_delivered = sum(v for (s, sftp), v in totals.items() if sftp == "delivered")
-n_pending   = sum(v for (s, sftp), v in totals.items() if sftp == "pending")
-n_failed    = sum(v for (s, sftp), v in totals.items() if sftp == "failed")
-n_done_no_sftp = sum(v for (s, sftp), v in totals.items() if s == "done" and sftp is None)
-n_parsed    = sum(v for (s, _), v in totals.items() if s == "parsed")
-n_parsing   = sum(v for (s, _), v in totals.items() if s == "parsing")
-n_error     = sum(v for (s, _), v in totals.items() if s == "error")
-n_skipped   = sum(v for (s, _), v in totals.items() if s == "skipped")
-n_not_started = TOTAL_EXPECTED - n_distinct
-
-def bar(n, total, width=30):
-    filled = int(round(n / total * width)) if total > 0 else 0
-    return f"[{'█' * filled}{'░' * (width - filled)}] {n:>5} / {total}"
-
-print(f"\n{'═'*62}")
-print(f"  STATO PIPELINE — {TOTAL_EXPECTED} file originali")
-print(f"{'═'*62}")
-print(f"  Nel log (distinti):  {n_distinct:>5}")
-print(f"  Non ancora iniziati: {n_not_started:>5}")
-print(f"{'─'*62}")
-print(f"  PARSING")
-print(f"    In corso (parsing):  {n_parsing:>5}")
-print(f"    Parsati:             {n_parsed:>5}")
-print(f"  SPLIT + SFTP")
-print(f"    Splittati, pending:  {n_pending:>5}")
-print(f"    Consegnati su SFTP:  {n_delivered:>5}")
-print(f"    Falliti SFTP:        {n_failed:>5}")
-print(f"  ALTRI")
-print(f"    Errori:              {n_error:>5}")
-print(f"    Skippati (>100MB):   {n_skipped:>5}")
-print(f"{'─'*62}")
-print(f"  Completamento SFTP:")
-print(f"  {bar(n_delivered, TOTAL_EXPECTED)}  ({n_delivered/TOTAL_EXPECTED*100:.1f}%)")
-print(f"{'═'*62}")
+    print(f"\n{'═' * 60}")
+    print(f"  BATCH {b['day_id']}   [{b['lifecycle'].upper()}]"
+          + ("   ⚠️ HAS ERRORS" if b["has_errors"] else ""))
+    print(f"{'═' * 60}")
+    print(f"  Files:      {total}")
+    print(f"  Predicted   {bar(predicted)} {predicted}/{total}")
+    print(f"  Delivered   {bar(done)} {done}/{total}")
+    print(f"  Errors: {b['n_error']}  SFTP failed: {b['n_sftp_failed']}  "
+          f"Deferred: {b['n_deferred']}  Needs review: {b['n_needs_review']}  "
+          f"Skipped: {b['n_skipped']}  Manual: {b['n_manual']}")
 
 # COMMAND ----------
 
-# DBTITLE 1,File da riprocessare
-# MAGIC %sql
-# MAGIC -- File da riprocessare: parsing stuck, parsed (non splittati), errori, SFTP falliti
-# MAGIC WITH ranked AS (
-# MAGIC     SELECT *,
-# MAGIC         ROW_NUMBER() OVER (
-# MAGIC             PARTITION BY filename
-# MAGIC             ORDER BY
-# MAGIC                 CASE status
-# MAGIC                     WHEN 'done'    THEN 1 WHEN 'parsed'  THEN 2
-# MAGIC                     WHEN 'parsing' THEN 3 WHEN 'error'   THEN 4
-# MAGIC                     WHEN 'skipped' THEN 5 ELSE 6
-# MAGIC                 END
-# MAGIC         ) AS rn
-# MAGIC     FROM `sbx-logistics`.`multidocument-us`.`processing_log`
-# MAGIC )
-# MAGIC SELECT
-# MAGIC     CASE
-# MAGIC         WHEN status = 'parsing'                          THEN '1_parsing_stuck'
-# MAGIC         WHEN status = 'parsed'                           THEN '2_parsed_not_split'
-# MAGIC         WHEN status = 'done' AND sftp_delivery_status = 'failed' THEN '3_sftp_failed'
-# MAGIC         WHEN status = 'error'                            THEN '4_error'
-# MAGIC     END                          AS categoria,
-# MAGIC     filename,
-# MAGIC     folder_id,
-# MAGIC     status,
-# MAGIC     sftp_delivery_status,
-# MAGIC     error_stage,
-# MAGIC     COALESCE(sftp_delivery_error, error_message) AS dettaglio_errore,
-# MAGIC     created_at,
-# MAGIC     completed_at
-# MAGIC FROM ranked
-# MAGIC WHERE rn = 1
-# MAGIC   AND (
-# MAGIC         status = 'parsing'
-# MAGIC      OR status = 'parsed'
-# MAGIC      OR (status = 'done'  AND sftp_delivery_status = 'failed')
-# MAGIC      OR status = 'error'
-# MAGIC   )
-# MAGIC ORDER BY categoria, filename
+# DBTITLE 1,Files needing attention (v_stuck_files)
+display(spark.sql(f"""
+    SELECT day_id, filename, folder_id, status, sftp_delivery_status,
+           stuck_reason, error_stage, retry_count, completed_at
+    FROM v_stuck_files
+    {DAY_FILTER}
+    ORDER BY day_id DESC, stuck_reason, filename
+"""))
 
 # COMMAND ----------
 
-# DBTITLE 1,File non ancora processati
+# DBTITLE 1,SFTP delivery board (v_sftp_board)
+display(spark.sql(f"""
+    SELECT * FROM v_sftp_board
+    {DAY_FILTER}
+    ORDER BY day_id DESC, folder_id
+"""))
+
+# COMMAND ----------
+
+# DBTITLE 1,Needs-review queue (v_needs_review)
+display(spark.sql(f"""
+    SELECT * FROM v_needs_review
+    {DAY_FILTER}
+    ORDER BY day_id DESC, filename
+"""))
+
+# COMMAND ----------
+
+# DBTITLE 1,Recent runs (v_run_summary)
+display(spark.sql(f"""
+    SELECT * FROM v_run_summary
+    {DAY_FILTER}
+    ORDER BY started_at DESC
+    LIMIT 30
+"""))
+
+# COMMAND ----------
+
+# DBTITLE 1,Recent events (v_events_recent)
+display(spark.sql(f"""
+    SELECT * FROM v_events_recent
+    {DAY_FILTER}
+    LIMIT 100
+"""))
+
+# COMMAND ----------
+
+# DBTITLE 1,Volume counts (physical files per batch)
 import os
 
-INBOX   = f"/Volumes/{CATALOG}/{SCHEMA}/inbox"
-ARCHIVE = f"/Volumes/{CATALOG}/{SCHEMA}/archive"
-MANUAL  = f"/Volumes/{CATALOG}/{SCHEMA}/manual"
+BASE = f"/Volumes/{CATALOG}/{SCHEMA}"
 
-# File ancora in inbox (non ancora parsati)
-n_inbox   = len([f for f in os.listdir(INBOX)   if f.endswith(".pdf")]) if os.path.exists(INBOX)   else 0
-n_manual  = len([f for f in os.listdir(MANUAL)  if f.endswith(".pdf")]) if os.path.exists(MANUAL)  else 0
+def count_pdfs(path):
+    try:
+        return sum(1 for f in os.listdir(path) if f.lower().endswith(".pdf"))
+    except FileNotFoundError:
+        return 0
 
-# File in archive (parsati + splittati, originale archiviato)
-n_archive = sum(
-    len([f for f in os.listdir(f"{ARCHIVE}/{y}/{m}") if f.endswith(".pdf")])
-    for y in os.listdir(ARCHIVE) if os.path.isdir(f"{ARCHIVE}/{y}")
-    for m in os.listdir(f"{ARCHIVE}/{y}") if os.path.isdir(f"{ARCHIVE}/{y}/{m}")
-) if os.path.exists(ARCHIVE) else 0
+def day_dirs(volume):
+    try:
+        return sorted(
+            (d for d in os.listdir(f"{BASE}/{volume}")
+             if os.path.isdir(f"{BASE}/{volume}/{d}")), reverse=True)
+    except FileNotFoundError:
+        return []
 
-print(f"Volumi fisici:")
-print(f"  inbox/:   {n_inbox:>5} PDF  (da parsare)")
-print(f"  archive/: {n_archive:>5} PDF  (elaborati, originale conservato)")
-print(f"  manual/:  {n_manual:>5} PDF  (>100MB, skip automatico)")
-print(f"  Totale:   {n_inbox + n_archive + n_manual:>5} PDF")
-
-# COMMAND ----------
-
-# DBTITLE 1,Dettaglio SFTP per run
-# MAGIC %sql
-# MAGIC -- Consegne SFTP per run_id (le ultime 10 run)
-# MAGIC SELECT
-# MAGIC     run_id,
-# MAGIC     COUNT(DISTINCT filename)                                          AS n_files,
-# MAGIC     SUM(CASE WHEN sftp_delivery_status = 'delivered' THEN 1 ELSE 0 END) AS delivered,
-# MAGIC     SUM(CASE WHEN sftp_delivery_status = 'pending'   THEN 1 ELSE 0 END) AS pending,
-# MAGIC     SUM(CASE WHEN sftp_delivery_status = 'failed'    THEN 1 ELSE 0 END) AS failed,
-# MAGIC     MIN(completed_at)   AS first_completed,
-# MAGIC     MAX(sftp_delivered_at) AS last_delivered
-# MAGIC FROM `sbx-logistics`.`multidocument-us`.`processing_log`
-# MAGIC WHERE status = 'done'
-# MAGIC GROUP BY run_id
-# MAGIC ORDER BY last_delivered DESC NULLS LAST
-# MAGIC LIMIT 10
+days = [DAY_ID] if DAY_ID else day_dirs("inbox")
+print(f"{'day_id':<12} {'inbox':>7} {'check':>7} {'gt':>5} {'archive':>8} {'manual':>7} {'quarant.':>9} {'output':>7}")
+for d in days:
+    gt = 0
+    try:
+        gt = sum(1 for f in os.listdir(f"{BASE}/ground_truth/{d}") if f.endswith(".json"))
+    except FileNotFoundError:
+        pass
+    out = 0
+    try:
+        for sub in os.listdir(f"{BASE}/output/{d}"):
+            out += count_pdfs(f"{BASE}/output/{d}/{sub}")
+    except FileNotFoundError:
+        pass
+    print(f"{d:<12} {count_pdfs(f'{BASE}/inbox/{d}'):>7} {count_pdfs(f'{BASE}/check/{d}'):>7} "
+          f"{gt:>5} {count_pdfs(f'{BASE}/archive/{d}'):>8} {count_pdfs(f'{BASE}/manual/{d}'):>7} "
+          f"{count_pdfs(f'{BASE}/quarantine/{d}'):>9} {out:>7}")
