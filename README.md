@@ -19,7 +19,7 @@ server-side at save time, and metrics are shown only *after* the operator commit
 ```
 inbox → nb_parse → parsed_documents → nb_split → split_results → nb_pdf_split → output/ → nb_sftp_upload → SFTP
                                             │
-                              nb_parse copies a 10% sample → check/
+                        nb_check_export copies a sample → validation/
                                             │
                                    ┌────────▼────────┐
                                    │  Ground Truth   │  ← this app
@@ -30,7 +30,7 @@ inbox → nb_parse → parsed_documents → nb_split → split_results → nb_pd
 
 ## What the annotator does
 
-1. Picks a PDF from `check/` (sidebar shows pending vs completed).
+1. Picks a PDF from `validation/` (sidebar shows pending vs completed).
 2. Clicks each page that is the **first page of a new document**. Page 1 is always
    a start. (No model hints — the operator works blind.)
 3. Toggles **Multi-document** (auto-set from boundary count, manually overridable).
@@ -90,7 +90,7 @@ the full sets including page 1.
 3. **Grant the app's service principal**:
    - `CAN_USE` on the SQL Warehouse,
    - `SELECT` on `split_results`, `INSERT` on `evaluation_results`,
-   - `READ VOLUME` on `check/`, `READ/WRITE VOLUME` on `ground_truth/`.
+   - `READ VOLUME` on `validation/`, `READ/WRITE VOLUME` on `ground_truth/`.
 4. **Deploy**: `databricks apps deploy` (or via the Apps UI pointing at this folder).
 
 ## Local development / testing (no Databricks)
@@ -107,7 +107,7 @@ python run_local.py --check-dir "C:/path/to/pdfs" --regen-model
 # open http://localhost:8000   (and /dashboard)
 ```
 
-Local mappings: `check/` → `--check-dir`; `split_results` → `local_data/model_predictions.json`;
+Local mappings: `validation/` → `--check-dir`; `split_results` → `local_data/model_predictions.json`;
 `ground_truth/` → `local_data/ground_truth/*.json`; `evaluation_results` → `local_data/evaluation_results.jsonl`.
 
 To run the **production** app instead (the Databricks SDK auto-authenticates from a

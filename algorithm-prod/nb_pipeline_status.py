@@ -3,6 +3,11 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
+# DBTITLE 1,Load shared helpers
+# MAGIC %run ./nb_helpers
+
+# COMMAND ----------
+
 # DBTITLE 1,Config
 # ══════════════════════════════════════════════════════════════════════
 # nb_pipeline_status — Pipeline monitor (read-only)
@@ -12,10 +17,8 @@
 # focuses on one batch; empty = all batches.
 # The control tower (pipeline-dashboard/) supersedes this notebook for
 # day-to-day operations; this stays as an in-workspace quick check.
+# CATALOG / SCHEMA / volume_paths come from nb_helpers — never redefined here.
 # ══════════════════════════════════════════════════════════════════════
-
-CATALOG = "sbx-logistics"
-SCHEMA = "multidocument-us"
 
 dbutils.widgets.text("day_id", "")
 DAY_ID = dbutils.widgets.get("day_id").strip()
@@ -138,19 +141,20 @@ def day_dirs(volume):
         return []
 
 days = [DAY_ID] if DAY_ID else day_dirs("inbox")
-print(f"{'day_id':<12} {'inbox':>7} {'check':>7} {'gt':>5} {'archive':>8} {'manual':>7} {'quarant.':>9} {'output':>7}")
+print(f"{'day_id':<12} {'inbox':>7} {'valid.':>7} {'gt':>5} {'archive':>8} {'oversiz.':>9} {'quarant.':>9} {'output':>7}")
 for d in days:
+    p = volume_paths(d)
     gt = 0
     try:
-        gt = sum(1 for f in os.listdir(f"{BASE}/ground_truth/{d}") if f.endswith(".json"))
+        gt = sum(1 for f in os.listdir(p["ground_truth"]) if f.endswith(".json"))
     except FileNotFoundError:
         pass
     out = 0
     try:
-        for sub in os.listdir(f"{BASE}/output/{d}"):
-            out += count_pdfs(f"{BASE}/output/{d}/{sub}")
+        for sub in os.listdir(p["output"]):
+            out += count_pdfs(f"{p['output']}/{sub}")
     except FileNotFoundError:
         pass
-    print(f"{d:<12} {count_pdfs(f'{BASE}/inbox/{d}'):>7} {count_pdfs(f'{BASE}/check/{d}'):>7} "
-          f"{gt:>5} {count_pdfs(f'{BASE}/archive/{d}'):>8} {count_pdfs(f'{BASE}/manual/{d}'):>7} "
-          f"{count_pdfs(f'{BASE}/quarantine/{d}'):>9} {out:>7}")
+    print(f"{d:<12} {count_pdfs(p['inbox']):>7} {count_pdfs(p['validation']):>7} "
+          f"{gt:>5} {count_pdfs(p['archive']):>8} {count_pdfs(p['oversized']):>9} "
+          f"{count_pdfs(p['quarantine']):>9} {out:>7}")

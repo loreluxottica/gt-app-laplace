@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 
 CATALOG = "sbx-logistics"
-SCHEMA = "multidocument-us"
+SCHEMA = "multidocument-prod"
 
 TABLE_LOG = f"`{CATALOG}`.`{SCHEMA}`.`processing_log`"
 TABLE_EVENTS = f"`{CATALOG}`.`{SCHEMA}`.`pipeline_events`"
@@ -62,9 +62,9 @@ def volume_paths(day_id: str) -> dict:
     base = f"/Volumes/{CATALOG}/{SCHEMA}"
     return {
         "inbox": f"{base}/inbox/{day_id}",
-        "manual": f"{base}/manual/{day_id}",
+        "oversized": f"{base}/oversized/{day_id}",
         "quarantine": f"{base}/quarantine/{day_id}",
-        "check": f"{base}/check/{day_id}",
+        "validation": f"{base}/validation/{day_id}",
         "ground_truth": f"{base}/ground_truth/{day_id}",
         "archive": f"{base}/archive/{day_id}",
         "output": f"{base}/output/{day_id}",

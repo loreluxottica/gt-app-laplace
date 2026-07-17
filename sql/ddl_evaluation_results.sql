@@ -1,10 +1,12 @@
 -- evaluation_results — written by the Ground Truth App.
 -- One row per (file, annotation event): human ground truth vs model boundaries.
 -- Run once before first use. Catalog/schema must match app.yaml.
+-- Writer: src/annotation.py:247-256 — INSERT with an explicit column list.
 
-CREATE TABLE IF NOT EXISTS `sbx-logistics`.`multidocument-us`.`evaluation_results` (
+CREATE TABLE IF NOT EXISTS `sbx-logistics`.`multidocument-prod`.`evaluation_results` (
     filename            STRING,
     folder_id           STRING,
+    day_id              STRING,   -- batch identity; src/annotation.py:248,258
     total_pages         INT,
 
     -- Human ground truth

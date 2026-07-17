@@ -10,7 +10,7 @@ import os
 class Config:
     # ── Unity Catalog ──────────────────────────────────────────────────────
     CATALOG = os.environ.get("UC_CATALOG", "sbx-logistics")
-    SCHEMA = os.environ.get("UC_SCHEMA", "multidocument-us")
+    SCHEMA = os.environ.get("UC_SCHEMA", "multidocument-prod")
 
     # ── SQL Warehouse for table access (StatementExecution) ────────────────
     WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")

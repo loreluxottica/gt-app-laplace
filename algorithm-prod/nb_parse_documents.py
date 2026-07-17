@@ -36,7 +36,7 @@ DAY_ID = get_day_id()
 RUN_ID = get_run_id()
 PATHS = volume_paths(DAY_ID)
 INBOX_PATH = PATHS["inbox"]
-MANUAL_PATH = PATHS["manual"]
+OVERSIZED_PATH = PATHS["oversized"]
 
 RUN_START = datetime.now()
 events = EventLogger(RUN_ID, DAY_ID, stage="parse")
@@ -96,7 +96,7 @@ n_oversized = df_inbox.filter(col("size_category") == "oversized").count()
 print(f"PDF found in inbox/{DAY_ID}: {n_total}")
 print(f"  Standard (≤{LARGE_FILE_THRESHOLD_MB}MB): {n_standard}")
 print(f"  Large ({LARGE_FILE_THRESHOLD_MB}-{MAX_FILE_SIZE_MB}MB): {n_large}")
-print(f"  Oversized (>{MAX_FILE_SIZE_MB}MB): {n_oversized} → volume manual/{DAY_ID}/")
+print(f"  Oversized (>{MAX_FILE_SIZE_MB}MB): {n_oversized} → volume oversized/{DAY_ID}/")
 
 # COMMAND ----------
 
@@ -124,7 +124,7 @@ if n_to_process == 0 and n_oversized_new == 0:
     dbutils.notebook.exit("ALL_ALREADY_PARSED")
 
 print(f"\nFile to process: {n_to_process}")
-print(f"Oversized files to move to manual: {n_oversized_new}")
+print(f"Oversized files to move to oversized/: {n_oversized_new}")
 
 # COMMAND ----------
 
@@ -171,7 +171,7 @@ if n_registered > 0:
 events.log("registered", detail=f"{n_registered} files registered")
 print(f"✓ {n_registered} entries registered in processing_log")
 
-# ── Move oversized files to manual/{day_id}/ (copy → verify → delete) ──
+# ── Move oversized files to oversized/{day_id}/ (copy → verify → delete) ──
 oversized_files = (
     df_to_process
     .filter(col("size_category") == "oversized")
@@ -180,15 +180,15 @@ oversized_files = (
 )
 
 for row in oversized_files:
-    dst = f"{MANUAL_PATH}/{row['filename']}.pdf"
+    dst = f"{OVERSIZED_PATH}/{row['filename']}.pdf"
     try:
-        dbutils.fs.mkdirs(MANUAL_PATH)
+        dbutils.fs.mkdirs(OVERSIZED_PATH)
         dbutils.fs.cp(row["path"], dst)
         dbutils.fs.ls(dst)  # verify copy before removing the original
         dbutils.fs.rm(row["path"])
         events.log("status_change", filename=row["filename"],
                    new_status="skipped", detail=f"oversized → {dst}")
-        print(f"  → {row['filename']}.pdf ({MAX_FILE_SIZE_MB}MB+) → manual/{DAY_ID}/")
+        print(f"  → {row['filename']}.pdf ({MAX_FILE_SIZE_MB}MB+) → oversized/{DAY_ID}/")
     except Exception as e:
         events.log("error", filename=row["filename"],
                    error_message=f"oversized move failed: {e}")
@@ -196,7 +196,7 @@ for row in oversized_files:
 
 events.flush()
 if oversized_files:
-    print(f"✓ {len(oversized_files)} file moved to manual/{DAY_ID}/")
+    print(f"✓ {len(oversized_files)} file moved to oversized/{DAY_ID}/")
 
 # COMMAND ----------
 

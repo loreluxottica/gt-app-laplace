@@ -1,9 +1,9 @@
 -- P3 — Control-tower SQL views. One definition, shared by the Flask dashboard
 -- and nb_pipeline_status. All views expose day_id (batch identity).
--- Run after ddl_pipeline_events.sql + ddl_day_id_migration.sql.
+-- Run after ddl_prod_schema.sql + ddl_pipeline_events.sql + ddl_evaluation_results.sql.
 
 USE CATALOG `sbx-logistics`;
-USE SCHEMA `multidocument-us`;
+USE SCHEMA `multidocument-prod`;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- v_file_status — one row per (day_id, filename): furthest-progressed log entry

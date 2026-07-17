@@ -33,13 +33,18 @@ Job parameters:
 
 ## Before first run (P0 — one-time)
 
-1. Run `sql/ddl_pipeline_events.sql` (creates `pipeline_events`).
-2. Run `sql/ddl_day_id_migration.sql` (adds `day_id` to the 7 tables + backfills `'legacy'`,
-   adds `needs_review`/`boundary_source` to split_results, creates the `quarantine` volume).
-3. Sync this folder to the workspace (`databricks workspace import-dir algorithm-prod /path/...`)
+Target schema: `sbx-logistics`.`multidocument-prod` (greenfield). `multidocument-us` is retired.
+
+1. Run `sql/ddl_prod_schema.sql` (creates the 7 pipeline tables, day_id native).
+2. Run `sql/ddl_pipeline_events.sql` (creates `pipeline_events`).
+3. Run `sql/ddl_evaluation_results.sql` (creates `evaluation_results`).
+4. Run `sql/views.sql` (creates the v_* views).
+   Do NOT run `sql/ddl_day_id_migration.sql` — retired, it targets the dead -us schema.
+5. Sync this folder to the workspace (`databricks workspace import-dir algorithm-prod /path/...`)
    — `nb_helpers.py` must sit next to the task notebooks (they `%run ./nb_helpers`).
-4. Uploader convention: PDFs are dropped in `inbox/{day_id}/` (e.g. `inbox/20260707/`).
-   The pipeline propagates day_id to manual/, quarantine/, check/, ground_truth/, archive/, output/.
+6. Uploader convention: PDFs are dropped in `inbox/{day_id}/` (e.g. `inbox/20260707/`).
+   The pipeline propagates day_id to oversized/, quarantine/, validation/, ground_truth/,
+   archive/, output/ — all created by code; only inbox/{day_id}/ is made by hand.
 
 ## Notes
 

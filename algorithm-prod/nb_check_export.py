@@ -15,8 +15,8 @@
 # Task 3 (final) of job_ingest (parse → split → check_export).
 # 1. Samples sample_pct% of the batch's split files (seeded random —
 #    a rerun picks the same sample) and copies the PDFs from
-#    inbox/{day_id}/ to check/{day_id}/ for the ground-truth app.
-# 2. Builds check/{day_id}/check_export_{day_id}.zip with each PDF +
+#    inbox/{day_id}/ to validation/{day_id}/ for the ground-truth app.
+# 2. Builds validation/{day_id}/check_export_{day_id}.zip with each PDF +
 #    its model prediction JSON, excluding files already annotated in
 #    ground_truth/{day_id}/.
 # 3. Emits the 'awaiting_annotation' batch event — the control tower
@@ -33,7 +33,7 @@ DAY_ID = get_day_id()
 RUN_ID = get_run_id()
 PATHS = volume_paths(DAY_ID)
 INBOX_PATH = PATHS["inbox"]
-CHECK_PATH = PATHS["check"]
+VALIDATION_PATH = PATHS["validation"]
 GT_PATH = PATHS["ground_truth"]
 
 # ── Annotation sample % (job parameter, user picks per batch in the UI) ──
@@ -45,7 +45,7 @@ except ValueError:
 if not (0 < SAMPLE_PCT <= 100):
     raise ValueError(f"sample_pct={SAMPLE_PCT} out of range (1-100)")
 
-OUT_ZIP = f"{CHECK_PATH}/check_export_{DAY_ID}.zip"
+OUT_ZIP = f"{VALIDATION_PATH}/check_export_{DAY_ID}.zip"
 
 events = EventLogger(RUN_ID, DAY_ID, stage="check_export")
 events.log("run_started", detail=f"sample_pct={SAMPLE_PCT}")
@@ -53,7 +53,7 @@ events.flush()
 
 print(f"Day ID:      {DAY_ID}")
 print(f"Sample:      {SAMPLE_PCT}%")
-print(f"Check dir:   {CHECK_PATH}/")
+print(f"Validation dir: {VALIDATION_PATH}/")
 print(f"Output ZIP:  {OUT_ZIP}")
 
 # COMMAND ----------
@@ -78,13 +78,13 @@ check_sample = sorted(rng.sample(sorted(split_filenames),
                                  min(sample_size, len(split_filenames))))
 
 print(f"Batch files with predictions: {len(split_filenames)}")
-print(f"Annotation sample ({SAMPLE_PCT}%):  {len(check_sample)} file → check/{DAY_ID}/")
+print(f"Annotation sample ({SAMPLE_PCT}%):  {len(check_sample)} file → validation/{DAY_ID}/")
 
-os.makedirs(CHECK_PATH, exist_ok=True)
+os.makedirs(VALIDATION_PATH, exist_ok=True)
 n_copied, n_already, n_copy_err = 0, 0, 0
 for fname in check_sample:
     src = f"{INBOX_PATH}/{fname}.pdf"
-    dst = f"{CHECK_PATH}/{fname}.pdf"
+    dst = f"{VALIDATION_PATH}/{fname}.pdf"
     if os.path.exists(dst):
         n_already += 1
         continue
@@ -94,7 +94,7 @@ for fname in check_sample:
     except Exception as e:
         n_copy_err += 1
         events.log("error", filename=fname,
-                   error_message=f"check copy failed: {str(e)[:300]}")
+                   error_message=f"validation copy failed: {str(e)[:300]}")
         print(f"  ⚠️  Copy failed for {fname}: {e}")
 
 events.flush()
@@ -103,12 +103,12 @@ print(f"✓ Copied {n_copied} (already present {n_already}, errors {n_copy_err})
 # COMMAND ----------
 
 # DBTITLE 1,Load model predictions (temp-view join, no IN-clause)
-all_pdf_files = [f for f in os.listdir(CHECK_PATH) if f.endswith(".pdf")]
+all_pdf_files = [f for f in os.listdir(VALIDATION_PATH) if f.endswith(".pdf")]
 if not all_pdf_files:
-    events.log("run_completed", new_status="NO_FILES_IN_CHECK")
+    events.log("run_completed", new_status="NO_FILES_IN_VALIDATION")
     events.flush()
-    print("⚠️  Nessun PDF in check/. Terminazione.")
-    dbutils.notebook.exit("NO_FILES_IN_CHECK")
+    print("⚠️  Nessun PDF in validation/. Terminazione.")
+    dbutils.notebook.exit("NO_FILES_IN_VALIDATION")
 
 # ── Escludi file già annotati (ground truth presente in ground_truth/{day_id}/) ──
 gt_annotated = set()
@@ -119,7 +119,7 @@ pdf_files    = [f for f in all_pdf_files if os.path.splitext(f)[0] not in gt_ann
 already_done = [f for f in all_pdf_files if os.path.splitext(f)[0] in gt_annotated]
 filenames    = [os.path.splitext(f)[0] for f in pdf_files]
 
-print(f"PDF totali in check/{DAY_ID}/:  {len(all_pdf_files)}")
+print(f"PDF totali in validation/{DAY_ID}/:  {len(all_pdf_files)}")
 print(f"  ✓ Già annotati (esclusi):  {len(already_done)}")
 print(f"  → Da annotare (nel ZIP):   {len(pdf_files)}")
 
@@ -171,7 +171,7 @@ n_skipped    = 0
 with zipfile.ZipFile(TMP_ZIP, "w", compression=zipfile.ZIP_DEFLATED) as zf:
     for pdf_file in sorted(pdf_files):
         filename = os.path.splitext(pdf_file)[0]
-        pdf_path = f"{CHECK_PATH}/{pdf_file}"
+        pdf_path = f"{VALIDATION_PATH}/{pdf_file}"
 
         if os.path.exists(pdf_path):
             zf.write(pdf_path, arcname=pdf_file)

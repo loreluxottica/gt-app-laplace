@@ -46,8 +46,8 @@ def inbox_count(day_id: str) -> int:
     return len(_files(config.volume_path("inbox", day_id), ".pdf"))
 
 
-def check_pdfs(day_id: str) -> list[str]:
-    return _files(config.volume_path("check", day_id), ".pdf")
+def validation_pdfs(day_id: str) -> list[str]:
+    return _files(config.volume_path("validation", day_id), ".pdf")
 
 
 def gt_jsons(day_id: str) -> set[str]:
@@ -57,9 +57,9 @@ def gt_jsons(day_id: str) -> set[str]:
 def volume_counts(day_id: str) -> dict:
     return {
         "inbox": len(_files(config.volume_path("inbox", day_id), ".pdf")),
-        "check": len(_files(config.volume_path("check", day_id), ".pdf")),
+        "validation": len(_files(config.volume_path("validation", day_id), ".pdf")),
         "ground_truth": len(_files(config.volume_path("ground_truth", day_id), ".json")),
         "archive": len(_files(config.volume_path("archive", day_id), ".pdf")),
-        "manual": len(_files(config.volume_path("manual", day_id), ".pdf")),
+        "oversized": len(_files(config.volume_path("oversized", day_id), ".pdf")),
         "quarantine": len(_files(config.volume_path("quarantine", day_id), ".pdf")),
     }

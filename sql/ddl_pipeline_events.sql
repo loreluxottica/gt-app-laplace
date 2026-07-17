@@ -2,7 +2,7 @@
 -- Every state transition, error, quarantine, delivery and dashboard action lands here.
 -- Run once on the sbx-logistics workspace (SQL warehouse or notebook %sql).
 
-CREATE TABLE IF NOT EXISTS `sbx-logistics`.`multidocument-us`.`pipeline_events` (
+CREATE TABLE IF NOT EXISTS `sbx-logistics`.`multidocument-prod`.`pipeline_events` (
   event_id      STRING    NOT NULL,   -- uuid4
   run_id        STRING,               -- Databricks job run id ({{job.run_id}}), shared by all tasks
   day_id        STRING,               -- batch identity = inbox/{day_id}/ folder name

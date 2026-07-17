@@ -5,13 +5,13 @@ import os
 class Config:
     # ── Unity Catalog ──────────────────────────────────────────────────────
     CATALOG = os.environ.get("UC_CATALOG", "sbx-logistics")
-    SCHEMA = os.environ.get("UC_SCHEMA", "multidocument-us")
+    SCHEMA = os.environ.get("UC_SCHEMA", "multidocument-prod")
 
     # ── SQL Warehouse for table access (StatementExecution) ────────────────
     WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
 
     # ── Volumes ────────────────────────────────────────────────────────────
-    CHECK_VOLUME = os.environ.get("CHECK_VOLUME", "check")
+    VALIDATION_VOLUME = os.environ.get("VALIDATION_VOLUME", "validation")
     GROUND_TRUTH_VOLUME = os.environ.get("GROUND_TRUTH_VOLUME", "ground_truth")
 
     # ── Annotator identity ─────────────────────────────────────────────────
@@ -31,9 +31,9 @@ class Config:
         return f"/Volumes/{cls.CATALOG}/{cls.SCHEMA}/{volume}"
 
     @classmethod
-    def check_path(cls, day_id: str | None = None) -> str:
-        """check/ volume; dated subfolder check/{day_id}/ when a batch is given."""
-        base = cls.volume_path(cls.CHECK_VOLUME)
+    def validation_path(cls, day_id: str | None = None) -> str:
+        """validation/ volume; dated subfolder validation/{day_id}/ when a batch is given."""
+        base = cls.volume_path(cls.VALIDATION_VOLUME)
         return f"{base}/{day_id}" if day_id else base
 
     @classmethod

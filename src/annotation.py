@@ -20,29 +20,29 @@ from .evaluation import evaluate, aggregate_stats_grouped
 #  Batches (day_id) + Worklist
 # ─────────────────────────────────────────────────────────────────────────────
 def list_days() -> list[dict]:
-    """day_id batches = dated subfolders of check/, with annotation progress."""
+    """day_id batches = dated subfolders of validation/, with annotation progress."""
     vols = get_volumes()
     days = []
-    for day_id in vols.list_subdirs(config.check_path()):
-        n_total = len(vols.list_pdfs(config.check_path(day_id)))
+    for day_id in vols.list_subdirs(config.validation_path()):
+        n_total = len(vols.list_pdfs(config.validation_path(day_id)))
         n_done = len(vols.list_json_stems(config.ground_truth_path(day_id)))
         days.append({"day_id": day_id, "n_total": n_total, "n_completed": n_done})
     return days
 
 
 def build_worklist(day_id: str) -> dict:
-    """PDFs in check/{day_id}/ split into pending (no GT yet) and done (GT exists)."""
+    """PDFs in validation/{day_id}/ split into pending (no GT yet) and done (GT exists)."""
     vols = get_volumes()
-    check_pdfs = vols.list_pdfs(config.check_path(day_id))
+    validation_pdfs = vols.list_pdfs(config.validation_path(day_id))
     done = vols.list_json_stems(config.ground_truth_path(day_id))
 
-    pending = [f for f in check_pdfs if f not in done]
-    completed = [f for f in check_pdfs if f in done]
+    pending = [f for f in validation_pdfs if f not in done]
+    completed = [f for f in validation_pdfs if f in done]
     return {
         "day_id": day_id,
         "pending": pending,
         "completed": completed,
-        "n_total": len(check_pdfs),
+        "n_total": len(validation_pdfs),
         "n_pending": len(pending),
         "n_completed": len(completed),
     }
@@ -98,7 +98,7 @@ def _get_doc(day_id: str, filename: str) -> fitz.Document:
         _DOC_CACHE.move_to_end(key)
         return _DOC_CACHE[key]
     vols = get_volumes()
-    data = vols.download_bytes(vols.pdf_path(config.check_path(day_id), filename))
+    data = vols.download_bytes(vols.pdf_path(config.validation_path(day_id), filename))
     doc = fitz.open(stream=data, filetype="pdf")
     _DOC_CACHE[key] = doc
     if len(_DOC_CACHE) > _DOC_CACHE_MAX:
