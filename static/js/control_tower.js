@@ -35,9 +35,21 @@ function toast(msg, isError = false) {
   toastTimer = setTimeout(() => t.classList.add("hidden"), 5000);
 }
 
+// ── Leaving the annotate tab ────────────────────────────────────────────────
+// window.Annotate (not the const) so this is safe to call before annotate.js
+// has finished parsing.
+function canLeaveAnnotate() {
+  if (!window.Annotate || !window.Annotate.isDirty()) return true;
+  return confirm("Unsaved annotation. Discard your marks?");
+}
+
 // ── Tabs ────────────────────────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach((b) => {
   b.onclick = () => {
+    const leavingAnnotate = state.tab === "annotate" && b.dataset.tab !== "annotate";
+    if (leavingAnnotate && !canLeaveAnnotate()) return;
+    if (leavingAnnotate) window.Annotate.leave();
+
     state.tab = b.dataset.tab;
     document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === b));
     document.querySelectorAll(".panel").forEach((p) =>
@@ -52,6 +64,7 @@ function refreshTab() {
     batches: loadBatches,
     flow: loadFlow,
     gate: loadGate,
+    annotate: () => window.Annotate && window.Annotate.enter(),
     errors: loadErrors,
     sftp: loadSftp,
     review: loadReview,
@@ -59,6 +72,27 @@ function refreshTab() {
   }[state.tab];
   if (fn) fn();
 }
+
+// ── Batch selection ─────────────────────────────────────────────────────────
+// The ONLY writer of state.dayId. Every entry point goes through it, so an
+// unsaved annotation can never have its batch swapped out from under it.
+function setDay(id) {
+  if (!id || id === state.dayId) return true;
+  if (!canLeaveAnnotate()) return false;
+  state.dayId = id;
+  $("day-select").value = id;
+  state.lastFunnel = null;   // don't animate against another batch's numbers
+  if (window.Annotate) window.Annotate.onDayChange();
+  return true;
+}
+
+// Switch batch + tab together. Carrying the day_id is the whole point: the old
+// two-app link opened the annotator at its root and let it pick its own batch.
+function goTab(tab, dayId) {
+  if (dayId && !setDay(dayId)) return;
+  document.querySelector(`[data-tab="${tab}"]`).click();
+}
+window.goTab = goTab;
 
 // ── Day selector ────────────────────────────────────────────────────────────
 async function loadDays(pickFirst = false) {
@@ -75,15 +109,23 @@ async function loadDays(pickFirst = false) {
     sel.appendChild(o);
   });
   if (days.length) {
-    state.dayId = prev && days.some((d) => d.day_id === prev) ? prev : days[0].day_id;
+    // Keep the current batch if it's still listed, else fall back to the newest.
+    // Through setDay so a batch that disappeared also resets the annotate tab
+    // instead of leaving it pointed at a batch that no longer exists.
+    const keep = prev && days.some((d) => d.day_id === prev);
+    setDay(keep ? prev : days[0].day_id);
     sel.value = state.dayId;
   }
   renderBatches(days);
   return days;
 }
 $("day-select").onchange = () => {
-  state.dayId = $("day-select").value;
-  state.lastFunnel = null;
+  // Revert the <select> if the switch is refused — otherwise it displays a
+  // batch the app is not actually on.
+  if (!setDay($("day-select").value)) {
+    $("day-select").value = state.dayId;
+    return;
+  }
   refreshTab();
 };
 
@@ -135,16 +177,12 @@ function renderBatches(days) {
     if (["uploaded", "parsing", "unknown"].includes(d.lifecycle) || d.n_inbox > d.n_files)
       btn("▶ Run ingest", "primary", () => openIngest(d.day_id));
     if (d.lifecycle === "awaiting_annotation")
-      btn("✎ Annotate", "primary", () => window.open(window.GT_APP_URL, "_blank"));
+      btn("✎ Annotate", "primary", () => goTab("annotate", d.day_id));
     if (["annotated", "predicted"].includes(d.lifecycle))
       btn("⇪ Split & upload", "primary", () => openDeliver(d.day_id));
     if (d.lifecycle === "delivering")
       btn("⇪ Resume delivery", "", () => openDeliver(d.day_id));
-    btn("Live flow", "", () => {
-      state.dayId = d.day_id;
-      $("day-select").value = d.day_id;
-      document.querySelector('[data-tab="flow"]').click();
-    });
+    btn("Live flow", "", () => goTab("flow", d.day_id));
 
     wrap.appendChild(card);
   });
@@ -246,7 +284,7 @@ async function loadGate() {
       ${g.missing?.length ? `
         <p class="muted">Still to annotate (${g.missing.length}):</p>
         <div class="missing-list">${g.missing.map(esc).join("<br>")}</div>
-        <p><a class="btn" href="${esc(window.GT_APP_URL)}" target="_blank">✎ Open Ground Truth app</a></p>` : ""}
+        <p><button class="btn primary" onclick="goTab('annotate')">✎ Annotate the ${g.missing.length} missing</button></p>` : ""}
       ${g.metrics && m.n_evaluated > 0 ? `
         <h3>Model vs ground truth (sample of ${esc(m.n_evaluated)})</h3>
         <div class="metric-grid">
@@ -452,8 +490,7 @@ function openIngest(dayId) {
     const res = await jpost("/api/run-ingest", { day_id: dayId, sample_pct: pct });
     if (res.error) return toast(res.error, true);
     toast(`job_ingest launched (run ${res.run_id})`);
-    state.dayId = dayId;
-    document.querySelector('[data-tab="flow"]').click();
+    goTab("flow", dayId);
   };
 }
 window.openIngest = openIngest;
@@ -466,12 +503,11 @@ function openDeliver(dayId) {
     const res = await jpost("/api/run-deliver", { day_id: dayId, sftp_remote_base: remote });
     if (res.error) {
       toast(res.error, true);
-      if (res.gate) { state.dayId = dayId; document.querySelector('[data-tab="gate"]').click(); }
+      if (res.gate) goTab("gate", dayId);
       return;
     }
     toast(`job_deliver launched (run ${res.run_id})`);
-    state.dayId = dayId;
-    document.querySelector('[data-tab="flow"]').click();
+    goTab("flow", dayId);
   };
 }
 window.openDeliver = openDeliver;
@@ -494,6 +530,13 @@ window.openRedeliver = openRedeliver;
 // ── Polling (live flow refreshes while visible; faster when a job runs) ─────
 function schedulePoll() {
   clearTimeout(state.pollTimer);
+  // Annotate never polls: a background re-render under someone mid-click is a
+  // defect, and /api/progress is the heaviest endpoint. Only loadFlow() sets
+  // .live, so clear it here or the dot keeps pulsing after polling stopped.
+  if (state.tab === "annotate") {
+    $("poll-dot").classList.remove("live");
+    return;
+  }
   const delay = state.tab === "flow" ? 4000 : 20000;
   state.pollTimer = setTimeout(async () => {
     try {

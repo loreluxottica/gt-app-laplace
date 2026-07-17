@@ -55,7 +55,7 @@ function renderGroup(title, s) {
 }
 
 async function load() {
-  const res = await fetch("/api/stats");
+  const res = await fetch("/api/annotate/stats");
   const data = await res.json();
   if (data.error) {
     document.getElementById("dash-content").innerHTML =
@@ -77,7 +77,12 @@ async function load() {
 // ── Export: PNG via html2canvas ──────────────────────────────────────────────
 async function downloadPNG() {
   const node = document.getElementById("dash-capture");
-  const canvas = await html2canvas(node, { backgroundColor: "#0a0a0a", scale: 2 });
+  // Pin the capture to the theme actually on screen. html2canvas doesn't resolve
+  // prefers-color-scheme, so a hardcoded colour renders light content on a dark
+  // canvas (or the reverse) depending on the viewer's OS setting.
+  const bg = getComputedStyle(document.documentElement)
+    .getPropertyValue("--surface").trim() || "#fcfcfb";
+  const canvas = await html2canvas(node, { backgroundColor: bg, scale: 2 });
   const a = document.createElement("a");
   a.href = canvas.toDataURL("image/png");
   a.download = `ground_truth_dashboard_${stamp()}.png`;
@@ -86,7 +91,7 @@ async function downloadPNG() {
 
 // ── Export: self-contained HTML (inlined CSS + current DOM) ──────────────────
 async function downloadHTML() {
-  const css = await fetch("/static/css/style.css").then((r) => r.text());
+  const css = await fetch("/static/css/control_tower.css").then((r) => r.text());
   const capture = document.getElementById("dash-capture").outerHTML;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Ground Truth Dashboard</title><style>${css}</style></head>

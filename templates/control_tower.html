@@ -18,6 +18,7 @@
         <button class="tab active" data-tab="batches">Batches</button>
         <button class="tab" data-tab="flow">Live Flow</button>
         <button class="tab" data-tab="gate">Annotation Gate</button>
+        <button class="tab" data-tab="annotate">Annotate</button>
         <button class="tab" data-tab="errors">Errors</button>
         <button class="tab" data-tab="sftp">SFTP</button>
         <button class="tab" data-tab="review">Review</button>
@@ -60,6 +61,59 @@
           <h2>Annotation Gate — <span id="gate-day" class="mono"></span></h2>
         </div>
         <div id="gate-body"></div>
+      </section>
+
+      <!-- Annotate — the batch comes from the topbar selector, not from here -->
+      <section id="panel-annotate" class="panel">
+        <div class="panel-head">
+          <h2>Annotate — <span id="ann-day" class="mono"></span></h2>
+          <span class="muted">Click a page to mark it as the <b>first page of a new document</b>. Page 1 is always a start. The model's prediction is deliberately not shown.</span>
+          <span class="spacer"></span>
+          <a href="/dashboard" class="btn tiny ghost" target="_blank">📊 Dashboard</a>
+        </div>
+
+        <div id="ann-nobatch" class="loading hidden">No batch selected.</div>
+
+        <div id="ann-body" class="ann-body">
+          <aside class="ann-side">
+            <div class="progress-wrap">
+              <div class="progress-row">
+                <span id="ann-n-pending">0</span> pending /
+                <span id="ann-n-done">0</span> done
+              </div>
+              <div class="progress-bar"><div id="ann-progress-fill"></div></div>
+            </div>
+            <div class="wl-section">
+              <div class="wl-header">PENDING</div>
+              <ul id="ann-pending" class="wl-list"></ul>
+            </div>
+            <div class="wl-section">
+              <div class="wl-header">COMPLETED</div>
+              <ul id="ann-completed" class="wl-list muted"></ul>
+            </div>
+          </aside>
+
+          <div class="ann-main">
+            <div class="ann-toolbar">
+              <div class="file-info">
+                <span id="ann-file">Select a file to begin</span>
+                <span id="ann-pagecount" class="badge"></span>
+              </div>
+              <span class="spacer"></span>
+              <label class="switch">
+                <input type="checkbox" id="ann-multidoc" />
+                <span>Multi-document</span>
+              </label>
+              <span id="ann-doccount" class="badge accent">1 document</span>
+              <button id="ann-reset" class="btn ghost tiny" disabled>Reset</button>
+              <button id="ann-save" class="btn primary" disabled>Save &amp; Evaluate</button>
+            </div>
+            <div id="ann-empty" class="empty">
+              <p>Pick a PDF from the left.</p>
+            </div>
+            <div id="ann-pages"></div>
+          </div>
+        </div>
       </section>
 
       <!-- Errors -->
@@ -153,9 +207,26 @@
       </form>
     </dialog>
 
+    <dialog id="dlg-eval">
+      <div class="dlg-form">
+        <div class="eval-head">
+          <h3 id="dlg-eval-title">Saved</h3>
+          <span class="spacer"></span>
+          <button id="dlg-eval-close" class="btn ghost tiny" onclick="document.getElementById('dlg-eval').close()">Close</button>
+        </div>
+        <div id="dlg-eval-body"></div>
+        <div class="dlg-actions">
+          <button id="dlg-eval-next" class="btn primary">Next file →</button>
+        </div>
+      </div>
+    </dialog>
+
     <div id="toast" class="toast hidden"></div>
   </div>
 
+  <!-- control_tower.js first: it declares state/$/esc/toast/jget/jpost/dayQ,
+       which annotate.js reuses rather than redeclaring. -->
   <script src="{{ url_for('static', filename='js/control_tower.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/annotate.js') }}"></script>
 </body>
 </html>

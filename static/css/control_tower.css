@@ -21,6 +21,11 @@
   --critical:    #d03b3b;
   /* ordinal funnel ramp (blue steps 250→650, surface-safe) */
   --f1: #86b6ef; --f2: #5598e7; --f3: #3987e5; --f4: #256abf; --f5: #1c5cab; --f6: #104281;
+  /* document-boundary marks — track the accent, never the status palette: a
+     page boundary is an action state, not a status, and must not read as one */
+  --mark-line:    #2a78d6;
+  --mark-overlay: rgba(42, 120, 214, 0.08);
+  --brand-font:   'Avenir LT Std', 'Segoe UI', sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -36,6 +41,8 @@
     --accent:    #3987e5;
     --accent-2:  #199e70;
     --f1: #184f95; --f2: #1c5cab; --f3: #256abf; --f4: #2a78d6; --f5: #3987e5; --f6: #5598e7;
+    --mark-line:    #5598e7;
+    --mark-overlay: rgba(85, 152, 231, 0.14);
   }
 }
 
@@ -59,7 +66,7 @@ body {
   position: sticky; top: 0; z-index: 10;
   flex-wrap: wrap;
 }
-.brand-mark { font-weight: 700; letter-spacing: 0.2px; }
+.brand-mark { font-weight: 700; letter-spacing: 0.2px; font-family: var(--brand-font); }
 .brand-sub { color: var(--muted); font-size: 12px; margin-left: 8px; }
 #tabs { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
 .tab {
@@ -274,3 +281,146 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
   max-width: 70vw;
 }
 .toast.error { background: var(--critical); color: #fff; }
+
+/* ── Annotate ────────────────────────────────────────────────────────── */
+.ann-body { display: flex; gap: 20px; align-items: flex-start; }
+.ann-side {
+  width: 250px; flex-shrink: 0; position: sticky; top: 76px;
+  background: var(--surface); border: 1px solid var(--grid); border-radius: 10px;
+  max-height: calc(100vh - 100px); overflow-y: auto;
+}
+.ann-main { flex: 1; min-width: 0; }
+.ann-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--grid); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 16px;
+  position: sticky; top: 76px; z-index: 5;
+}
+.ann-toolbar .file-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#ann-file { font-weight: 600; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.spacer { flex: 1; }
+.switch { display: flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; }
+.switch input { accent-color: var(--accent); width: 16px; height: 16px; }
+.badge.accent { background: var(--accent); color: #fff; border-color: var(--accent); }
+.badge.accent::before { color: #fff; }
+
+.progress-wrap { padding: 12px 14px; border-bottom: 1px solid var(--grid); }
+.progress-row { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.progress-bar { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; }
+#ann-progress-fill { height: 100%; width: 0; background: var(--accent-2); transition: width 0.3s; }
+
+.wl-section { padding: 6px 0; }
+.wl-header { font-size: 11px; font-weight: 700; color: var(--muted); padding: 6px 14px; letter-spacing: 0.6px; }
+.wl-list { list-style: none; margin: 0; padding: 0; }
+.wl-item {
+  padding: 6px 14px; font-size: 12.5px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-left: 2px solid transparent; color: var(--ink);
+  font-family: ui-monospace, Consolas, monospace;
+}
+.wl-item:hover { background: var(--page); }
+.wl-item.active { background: var(--page); border-left-color: var(--accent); font-weight: 700; }
+.wl-item.done { color: var(--muted); }
+.wl-item.done::before { content: "\2713  "; color: var(--good); }
+
+.empty { max-width: 460px; margin: 50px auto; text-align: center; color: var(--muted); line-height: 1.6; }
+#ann-pages { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+
+.page-card {
+  position: relative; cursor: pointer;
+  border: 3px solid transparent; border-radius: 6px;
+  /* Deliberately white in BOTH themes: this is a scanned page, i.e. paper.
+     Theming it to var(--surface) would render every document as a dark-mode
+     ghost. Do not "fix" this. */
+  background: #fff;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  width: min(820px, 100%);
+}
+.page-card .page-img { display: block; width: 100%; height: auto; border-radius: 4px; }
+.page-card .page-skeleton {
+  width: 100%; aspect-ratio: 1 / 1.414; background: var(--grid);
+  border-radius: 4px; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 12px;
+}
+.page-card:hover { box-shadow: 0 0 0 2px var(--baseline); }
+.page-card.is-start { border-color: var(--mark-line); box-shadow: 0 0 0 3px var(--mark-line); }
+.page-card.is-start::after {
+  content: ""; position: absolute; inset: 0; border-radius: 4px;
+  background: var(--mark-overlay); pointer-events: none;
+}
+.page-label {
+  position: absolute; top: -11px; left: 10px; z-index: 2;
+  background: var(--page); color: var(--muted);
+  font-size: 11px; padding: 1px 8px; border-radius: 8px; border: 1px solid var(--grid);
+}
+/* The badge TEXT ("▶ NEW DOCUMENT") is what makes the boundary state
+   accessible — the border colour never carries it alone. */
+.page-badge {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+  background: transparent;
+}
+.page-card.is-start .page-badge { background: var(--mark-line); color: #fff; }
+
+/* Eval dialog: wider than the job dialogs to fit the metric grid */
+#dlg-eval { max-width: 560px; }
+.eval-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.eval-head h3 { margin: 0; }
+.metric.ok { border-color: var(--good); }
+.metric.bad { border-style: dashed; border-color: var(--serious); }
+.metric.ok .m-val::after { content: "  \2713"; color: var(--good); }
+.metric.bad .m-val::after { content: "  \2717"; color: var(--serious); }
+
+@media (max-width: 900px) {
+  .ann-body { flex-direction: column; }
+  .ann-side { width: 100%; position: static; max-height: 320px; }
+}
+
+/* ── Dashboard (standalone /dashboard page) ──────────────────────────── */
+.dash-top {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 28px; border-bottom: 1px solid var(--grid); background: var(--surface);
+}
+.dash-brand .brand-mark { font-size: 18px; font-weight: 800; }
+.dash-brand .brand-sub { font-size: 11px; color: var(--muted); margin-top: 2px; margin-left: 0; }
+.dash-actions { display: flex; gap: 10px; align-items: center; }
+.dash-wrap { padding: 28px; max-width: 1080px; margin: 0 auto; }
+
+/* capture target — self-contained so the PNG/HTML export looks identical */
+#dash-capture {
+  background: var(--surface); border: 1px solid var(--grid); border-radius: 14px; padding: 26px;
+}
+.dash-title { font-size: 20px; font-weight: 800; margin: 0 0 2px; }
+.dash-sub { color: var(--muted); font-size: 12.5px; margin-bottom: 22px; }
+
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.stat {
+  background: var(--page); border: 1px solid var(--grid); border-radius: 12px;
+  padding: 16px; display: flex; flex-direction: column; gap: 6px;
+}
+.stat.wide { grid-column: span 2; }
+.stat .s-val { font-size: 30px; font-weight: 800; line-height: 1; font-family: ui-monospace, Consolas, monospace; }
+.stat .s-lbl { font-size: 12px; color: var(--muted); }
+.stat .s-sub { font-size: 11px; color: var(--muted); }
+
+.stat-section-title {
+  font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.7px;
+  margin: 26px 0 12px; text-transform: uppercase;
+}
+
+.bar { height: 8px; background: var(--grid); border-radius: 5px; overflow: hidden; margin-top: 4px; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+
+.dash-group { padding-top: 22px; margin-top: 22px; border-top: 1px solid var(--grid); }
+.dash-group:first-child { padding-top: 0; margin-top: 0; border-top: none; }
+.group-heading {
+  font-size: 16px; font-weight: 800; letter-spacing: 0.3px; margin-bottom: 4px;
+  display: flex; align-items: baseline; gap: 10px;
+}
+.group-count { font-size: 12px; font-weight: 600; color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+
+.dash-foot { margin-top: 22px; color: var(--muted); font-size: 11px; text-align: right; }
+
+@media (max-width: 760px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
