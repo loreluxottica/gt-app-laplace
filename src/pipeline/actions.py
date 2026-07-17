@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import uuid
 
-from .config import config
-from .db import get_sql
+from ..core.auth import actor
+from ..core.config import config
+from ..core.db import get_sql
 
 _LOG = config.fq("processing_log")
 _EVENTS = config.fq("pipeline_events")
@@ -23,7 +24,7 @@ def _log_event(sql, day_id: str, event_type: str, filename: str | None,
         sql.str_param("eid", str(uuid.uuid4())),
         sql.str_param("day", day_id),
         sql.str_param("etype", event_type),
-        sql.str_param("actor", config.ACTOR),
+        sql.str_param("actor", actor()),
         sql.str_param("detail", detail or ""),
     ]
     fname_sql = ":f"

@@ -7,7 +7,8 @@ Metrics come from evaluation_results once files are annotated.
 """
 from __future__ import annotations
 
-from . import queries, volumes
+from ..core import volumes
+from . import queries
 
 
 def gate_state(day_id: str) -> dict:

@@ -20,6 +20,11 @@ class SqlClient:
             )
         self.warehouse_id = config.WAREHOUSE_ID
 
+    @property
+    def workspace(self) -> WorkspaceClient:
+        """The underlying SDK client — used by jobs.py for the Jobs API."""
+        return self._w
+
     # ── core executor ──────────────────────────────────────────────────────
     def execute(self, statement: str, parameters: list | None = None) -> list[dict]:
         """Run SQL and return rows as list[dict]. Empty list for non-SELECT.

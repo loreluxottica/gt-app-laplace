@@ -2,8 +2,8 @@
 here — the views are the single definition shared with nb_pipeline_status."""
 from __future__ import annotations
 
-from .config import config
-from .db import get_sql
+from ..core.config import config
+from ..core.db import get_sql
 
 
 def _day_params(sql, day_id: str | None):

@@ -17,19 +17,11 @@ from .evaluation import evaluate, aggregate_stats_grouped
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Batches (day_id) + Worklist
+#  Worklist
+#
+#  There is no day list here: batches come from /api/days (inbox/ ∪ validation/
+#  ∪ tables), which is a superset of what validation/ alone can see.
 # ─────────────────────────────────────────────────────────────────────────────
-def list_days() -> list[dict]:
-    """day_id batches = dated subfolders of validation/, with annotation progress."""
-    vols = get_volumes()
-    days = []
-    for day_id in vols.list_subdirs(config.validation_path()):
-        n_total = len(vols.list_pdfs(config.validation_path(day_id)))
-        n_done = len(vols.list_json_stems(config.ground_truth_path(day_id)))
-        days.append({"day_id": day_id, "n_total": n_total, "n_completed": n_done})
-    return days
-
-
 def build_worklist(day_id: str) -> dict:
     """PDFs in validation/{day_id}/ split into pending (no GT yet) and done (GT exists)."""
     vols = get_volumes()
@@ -63,7 +55,7 @@ def get_model_prediction(filename: str, day_id: str | None = None) -> dict | Non
         f"""
         SELECT filename, folder_id, total_pages, predicted_starts,
                n_documents, model_used
-        FROM {config.fq_table(config.TABLE_SPLIT_RESULTS)}
+        FROM {config.fq(config.TABLE_SPLIT_RESULTS)}
         WHERE filename = :fname {day_filter}
         ORDER BY processing_timestamp DESC
         LIMIT 1
@@ -88,6 +80,10 @@ def get_model_prediction(filename: str, day_id: str | None = None) -> dict | Non
 # ─────────────────────────────────────────────────────────────────────────────
 PAGE_ZOOM = 1.6          # ~115 DPI
 JPEG_QUALITY = 80
+# Cached per worker process, so resident memory is _DOC_CACHE_MAX × workers.
+# NOT thread-safe: fitz.Document isn't, and there is no lock here. Safe under
+# gunicorn's sync workers (one request per worker at a time) — adding --threads
+# would need a render lock around _get_doc/render_page_jpeg first.
 _DOC_CACHE: "OrderedDict[str, fitz.Document]" = OrderedDict()
 _DOC_CACHE_MAX = 4       # keep the last few PDFs open (bytes can be large)
 
@@ -131,7 +127,7 @@ def get_eval_stats() -> dict:
         f"""
         SELECT model_starts, exact_match, multidoc_correct,
                precision, recall, f1, f1_tol, n_offby1, gt_is_multidoc
-        FROM {config.fq_table(config.TABLE_EVALUATION)}
+        FROM {config.fq(config.TABLE_EVALUATION)}
         """
     )
     norm = []
@@ -224,7 +220,7 @@ def run_and_store_evaluation(gt_payload: dict, model: dict | None) -> dict:
 
 def _insert_evaluation_row(gt: dict, model: dict | None, ev) -> None:
     sql = get_sql()
-    table = config.fq_table(config.TABLE_EVALUATION)
+    table = config.fq(config.TABLE_EVALUATION)
 
     gt_starts = _int_array_literal(gt["predicted_starts"])
     model_starts = _int_array_literal(model["predicted_starts"]) if model else "NULL"

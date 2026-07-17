@@ -1,8 +1,8 @@
 """Databricks Jobs integration: launch job_ingest / job_deliver, poll run state."""
 from __future__ import annotations
 
-from .config import config
-from .db import get_sql
+from ..core.config import config
+from ..core.db import get_sql
 
 
 def _jobs():
