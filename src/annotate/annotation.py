@@ -219,20 +219,47 @@ def run_and_store_evaluation(gt_payload: dict, model: dict | None) -> dict:
 
 
 def _insert_evaluation_row(gt: dict, model: dict | None, ev) -> None:
+    """Append one row to evaluation_results.
+
+    Every string goes in as a bound parameter. The numbers do NOT: named
+    parameters have no ARRAY type in StatementExecution, so gt_starts /
+    model_starts must be `array(1, 5, 9)` literals — which is safe only because
+    _int_array_literal() int()-coerces each element. The scalar numbers are
+    coerced here for the same reason, rather than trusting a distant caller.
+    """
     sql = get_sql()
     table = config.fq(config.TABLE_EVALUATION)
+    params = []
 
+    def p(name: str, value) -> str:
+        """Bind a string as :name, or emit a literal NULL. Never interpolates."""
+        if value is None:
+            return "NULL"
+        params.append(sql.str_param(name, str(value)))
+        return f":{name}"
+
+    # Strings — bound. `annotator` especially: it comes from a request header
+    # (X-Forwarded-Email) and is the one field no regex upstream validates.
+    fname = p("fname", gt["filename"])
+    folder = p("folder", gt.get("folder_id"))
+    day = p("day", gt.get("day_id"))
+    model_used = p("model_used", model.get("model_used") if model else None)
+    annotator = p("annotator", gt["annotator"])
+
+    # Numbers + arrays — literals, coerced at the point of use.
     gt_starts = _int_array_literal(gt["predicted_starts"])
+    gt_n = int(gt["n_documents"])
+    total_pages = int(gt["total_pages"])
+    gt_multi = "TRUE" if gt["is_multidoc"] else "FALSE"
     model_starts = _int_array_literal(model["predicted_starts"]) if model else "NULL"
-    model_n = model["n_documents"] if model else "NULL"
-    model_used = _sql_str(model["model_used"]) if model and model.get("model_used") else "NULL"
+    model_n = int(model["n_documents"]) if model else "NULL"
 
     if ev:
         exact_match = "TRUE" if ev.exact_match else "FALSE"
         metrics = (
-            f"{ev.n_true_positive}, {ev.n_false_positive}, {ev.n_false_negative}, "
-            f"{ev.precision}, {ev.recall}, {ev.f1}, "
-            f"{ev.n_offby1}, {ev.precision_tol}, {ev.recall_tol}, {ev.f1_tol}, "
+            f"{int(ev.n_true_positive)}, {int(ev.n_false_positive)}, {int(ev.n_false_negative)}, "
+            f"{float(ev.precision)}, {float(ev.recall)}, {float(ev.f1)}, "
+            f"{int(ev.n_offby1)}, {float(ev.precision_tol)}, {float(ev.recall_tol)}, {float(ev.f1_tol)}, "
             f"{'TRUE' if ev.multidoc_correct else 'FALSE'}"
         )
     else:
@@ -251,15 +278,15 @@ def _insert_evaluation_row(gt: dict, model: dict | None, ev) -> None:
             multidoc_correct,
             annotator, annotated_at
         ) VALUES (
-            {_sql_str(gt['filename'])}, {_sql_str(gt.get('folder_id'))}, {_sql_str(gt.get('day_id'))}, {gt['total_pages']},
-            {gt_starts}, {gt['n_documents']}, {'TRUE' if gt['is_multidoc'] else 'FALSE'},
+            {fname}, {folder}, {day}, {total_pages},
+            {gt_starts}, {gt_n}, {gt_multi},
             {model_starts}, {model_n}, {model_used},
             {exact_match},
             {metrics},
-            {_sql_str(gt['annotator'])}, current_timestamp()
+            {annotator}, current_timestamp()
         )
     """
-    sql.execute(stmt)
+    sql.execute(stmt, parameters=params)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -309,10 +336,6 @@ def _parse_int_array(v) -> list[int]:
 
 
 def _int_array_literal(arr: list[int]) -> str:
+    """`array(1, 5, 9)`. A literal because StatementExecution has no ARRAY
+    parameter type; safe because every element is int()-coerced here."""
     return "array(" + ", ".join(str(int(x)) for x in arr) + ")"
-
-
-def _sql_str(v) -> str:
-    if v is None:
-        return "NULL"
-    return "'" + str(v).replace("'", "''") + "'"
