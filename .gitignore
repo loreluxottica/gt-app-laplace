@@ -11,6 +11,12 @@ venv/
 local_data/
 **/page_cache/
 
+# Local-only, deliberately never pushed: the no-Databricks UI harnesses and the
+# project context file. Purged from history 2026-07-17 — do not re-add.
+CLAUDE.md
+run_local.py
+pipeline-dashboard/run_local.py
+
 # IDE
 .vscode/
 .idea/

@@ -93,24 +93,9 @@ the full sets including page 1.
    - `READ VOLUME` on `validation/`, `READ/WRITE VOLUME` on `ground_truth/`.
 4. **Deploy**: `databricks apps deploy` (or via the Apps UI pointing at this folder).
 
-## Local development / testing (no Databricks)
+## Local development / testing
 
-`run_local.py` runs the whole app against the local filesystem — no workspace
-connection. It reuses only the pure `src/evaluation.py`; production modules are
-untouched. It serves the same `templates/` + `static/`, renders pages with the same
-server-side PyMuPDF path, and **fakes** `split_results` so evaluation has something
-to compare against (`local_data/model_predictions.json`).
-
-```bash
-pip install -r requirements.txt
-python run_local.py --check-dir "C:/path/to/pdfs" --regen-model
-# open http://localhost:8000   (and /dashboard)
-```
-
-Local mappings: `validation/` → `--check-dir`; `split_results` → `local_data/model_predictions.json`;
-`ground_truth/` → `local_data/ground_truth/*.json`; `evaluation_results` → `local_data/evaluation_results.jsonl`.
-
-To run the **production** app instead (the Databricks SDK auto-authenticates from a
+Run the app against the workspace (the Databricks SDK auto-authenticates from a
 `DATABRICKS` profile / env vars):
 
 ```bash
@@ -124,7 +109,6 @@ python app.py            # http://localhost:8000
 
 ```
 app.py                          Flask routes (production)
-run_local.py                    self-contained local test harness (filesystem backend)
 app.yaml                        Databricks Apps config
 requirements.txt
 src/config.py                   env-driven config
@@ -146,6 +130,6 @@ sql/ddl_evaluation_results.sql  table DDL
 - **Types per document** (Invoice/AWB/…) — schema already carries a `type` slot.
 - **Concurrency**: GT files are keyed by filename; last save wins. Fine for a small
   review team; add optimistic locking if multiple reviewers share one file.
-- Pages render server-side to JPEG (`PAGE_ZOOM`/`JPEG_QUALITY` in `src/annotation.py`
-  and `run_local.py`) and the browser lazy-loads only visible pages. The in-process
-  PDF cache is per-worker (bounded); fine for single-reviewer use.
+- Pages render server-side to JPEG (`PAGE_ZOOM`/`JPEG_QUALITY` in `src/annotation.py`)
+  and the browser lazy-loads only visible pages. The in-process PDF cache is
+  per-worker (bounded); fine for single-reviewer use.

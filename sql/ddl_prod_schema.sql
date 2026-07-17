@@ -6,8 +6,8 @@
 -- and its shape only ever existed in the notebooks' write paths. Every column
 -- below is reconstructed from the code that writes it (file:line in comments).
 --
--- day_id is NATIVE here — the old ddl_day_id_migration.sql (ALTER TABLE + backfill
--- to 'legacy') exists only for -us and must NOT be run against this schema.
+-- day_id / needs_review / boundary_source are NATIVE here. On the retired -us
+-- schema they were bolted on by a migration; this schema is born with them.
 --
 -- ⚠ COLUMN ORDER IS LOAD-BEARING. Every writer is either a positional
 --   .saveAsTable(mode="append") or an INSERT INTO ... VALUES with no column

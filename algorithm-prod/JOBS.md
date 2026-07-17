@@ -39,7 +39,6 @@ Target schema: `sbx-logistics`.`multidocument-prod` (greenfield). `multidocument
 2. Run `sql/ddl_pipeline_events.sql` (creates `pipeline_events`).
 3. Run `sql/ddl_evaluation_results.sql` (creates `evaluation_results`).
 4. Run `sql/views.sql` (creates the v_* views).
-   Do NOT run `sql/ddl_day_id_migration.sql` — retired, it targets the dead -us schema.
 5. Sync this folder to the workspace (`databricks workspace import-dir algorithm-prod /path/...`)
    — `nb_helpers.py` must sit next to the task notebooks (they `%run ./nb_helpers`).
 6. Uploader convention: PDFs are dropped in `inbox/{day_id}/` (e.g. `inbox/20260707/`).
@@ -48,7 +47,6 @@ Target schema: `sbx-logistics`.`multidocument-prod` (greenfield). `multidocument
 
 ## Notes
 
-- The old `multidocument-job/` folder contains stale June copies — deprecated, do not edit.
 - `nb_pipeline_status` is a read-only monitor; the control tower app supersedes it.
 - Requeue semantics (used by the control tower) are documented in the repo plan and
   implemented in `pipeline-dashboard/src/actions.py`.

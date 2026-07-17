@@ -39,5 +39,6 @@ python app.py       # → http://localhost:8001
 ```
 
 Prerequisites on the workspace (one-time, see ../algorithm-prod/JOBS.md):
-`sql/ddl_pipeline_events.sql`, `sql/ddl_day_id_migration.sql`, `sql/views.sql`,
-and the two jobs created from the notebooks.
+`sql/ddl_prod_schema.sql`, `sql/ddl_pipeline_events.sql`,
+`sql/ddl_evaluation_results.sql`, `sql/views.sql` — all already executed on
+`multidocument-prod` — and the two jobs created from the notebooks.
