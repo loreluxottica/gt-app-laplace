@@ -1,56 +1,81 @@
-# Ground Truth App
+# Laplace Multidocument — Control Tower + Ground Truth
 
-Human-in-the-loop annotation tool for the **multi-document splitting** pipeline.
-A reviewer opens a sampled PDF, marks where each new document starts, flags whether
-the package is multi-document, and saves. The app stores the label as JSON in the
-`ground_truth/` volume and compares it against the model's prediction
-(`split_results.predicted_starts`), writing metrics to `evaluation_results`.
+One web app that drives the **multi-document splitting** pipeline end to end and
+carries the human annotation step inside it.
 
-Runs as a **Databricks App** (Flask backend; pages are rendered server-side to
-JPEG by PyMuPDF and lazy-loaded in the browser — no PDF.js, no CDN). The UI is a
-neutral black/white/gray theme.
+Concatenated multi-document PDF "packages" arrive from logistics. The pipeline
+parses them, an LLM predicts document boundaries, a human annotates a sample
+(ground truth), the PDFs are physically split and delivered to SFTP. This app is
+where an operator watches, annotates and drives all of that.
 
-**Operator-blind:** the model's predicted boundaries are never sent to the
-annotation page, so the human's labelling is unbiased. The comparison happens
-server-side at save time, and metrics are shown only *after* the operator commits.
+Runs as a **Databricks App** (Flask, port 8000). Vanilla JS, no framework, no
+build step, no CDN. Light + dark theme.
 
-## Where it sits in the pipeline
+> Until 2026-07-17 this was two apps — the annotator on :8000 and a control tower
+> on :8001, linked only by a `window.open()` to the annotator's root. Because the
+> annotator then picked its own batch, you could land on a different one than you
+> clicked from. They are now a single app, and the topbar's batch selector drives
+> every tab, annotation included.
 
-```
-inbox → nb_parse → parsed_documents → nb_split → split_results → nb_pdf_split → output/ → nb_sftp_upload → SFTP
-                                            │
-                        nb_check_export copies a sample → validation/
-                                            │
-                                   ┌────────▼────────┐
-                                   │  Ground Truth   │  ← this app
-                                   │      App        │
-                                   └────────┬────────┘
-                         ground_truth/*.json + evaluation_results
-```
+## The eight tabs
+
+| Tab | What |
+|---|---|
+| **Batches** | every `inbox/{day_id}/` folder with its lifecycle badge and contextual actions |
+| **Live Flow** | animated funnel (inbox → parsed → predicted → ground truth → split → delivered), polls every 4s while a job runs; errors show as red counters on the failing stage |
+| **Annotation Gate** | sample progress, model-vs-GT metrics, unlocks delivery |
+| **Annotate** | the annotation UI — see below |
+| **Errors** | every failure, with its reason and a requeue button |
+| **SFTP** | delivery board + deferred re-delivery to a different remote path |
+| **Review** | packages where both LLMs failed and would ship UNSPLIT — approve or requeue |
+| **Files** | search, per-file status, event timeline, raw LLM responses |
+
+A batch flows: `uploaded → parsing → predicted → awaiting_annotation → annotated
+→ delivering → delivered`. Every action is written to `pipeline_events` with an
+actor — nothing the app does is silent or unattributed.
+
+## The annotation gate
+
+The sample lands in `validation/{day_id}/`. Every sampled file needs a
+`ground_truth/{day_id}/{f}.json` before delivery is allowed. **The gate counts
+those JSONs**, so annotating a file in the Annotate tab moves the gate counter,
+the batch lifecycle, and the Split & upload button in the same page. Ask to
+deliver early and the server answers `409` and drops you on the Gate tab.
 
 ## What the annotator does
 
-1. Picks a PDF from `validation/` (sidebar shows pending vs completed).
-2. Clicks each page that is the **first page of a new document**. Page 1 is always
-   a start. (No model hints — the operator works blind.)
-3. Toggles **Multi-document** (auto-set from boundary count, manually overridable).
+1. Picks a PDF from the worklist (the batch comes from the topbar selector).
+2. Clicks each page that is the **first page of a new document**. Page 1 is
+   always a start.
+3. Toggles **Multi-document** (auto-set from boundary count, overridable).
 4. **Save & Evaluate** → writes the GT JSON and shows precision / recall / F1
    (exact and ±1-tolerant) plus exact-match and multidoc-correct flags.
 
-## Dashboard
+**Operator-blind:** the model's predicted boundaries are never sent to the
+annotation page, so the labelling is unbiased. The comparison happens
+server-side at save time, and metrics appear only *after* the operator commits.
 
-`/dashboard` aggregates `evaluation_results` into headline numbers — PDFs annotated,
-exact split matches + rate, multidoc-correct rate, off-by-one count, and average
-precision / recall / F1 (exact and ±1). Export buttons produce a **PNG** snapshot
-(vendored `html2canvas`, no CDN) and a **standalone HTML** file to drop into slides.
+Pages are rendered server-side to JPEG by PyMuPDF and lazy-loaded as they scroll
+into view — no PDF.js, no CDN. Unsaved marks are guarded against tab switches,
+batch changes and page unload.
+
+## `/dashboard`
+
+Aggregates `evaluation_results` into headline numbers — PDFs annotated, exact
+split matches + rate, multidoc-correct rate, off-by-one count, and average
+precision / recall / F1. Exports a **PNG** (vendored `html2canvas`, no CDN) and a
+**standalone HTML** file for slides. It is a separate page rather than a tab
+because html2canvas cannot resolve `prefers-color-scheme` — the export needs a
+pinned colour context.
 
 ## Data produced
 
-**`ground_truth/{filename}.json`**
+**`ground_truth/{day_id}/{filename}.json`**
 ```json
 {
   "filename": "34572_PACKAGE",
   "folder_id": "34572",
+  "day_id": "20260714",
   "total_pages": 12,
   "is_multidoc": true,
   "predicted_starts": [1, 5, 9],
@@ -73,63 +98,76 @@ precision / recall / F1 (exact and ±1). Export buttons produce a **PNG** snapsh
 ## Evaluation metric
 
 A boundary = first page of a document. Page 1 is excluded from precision/recall/F1
-(it is always a trivial boundary that both sides agree on); `exact_match` compares
-the full sets including page 1.
+(it is always a trivial boundary both sides agree on); `exact_match` compares the
+full sets including page 1.
 
 - **Exact**: a predicted boundary is correct only if its page is in the GT set.
 - **Tolerant (±1)**: a predicted boundary within one page of an unused GT boundary
   counts as a match (greedy nearest). `n_offby1` = how many matches were off-by-one.
 - **multidoc_correct**: `(gt_n_docs > 1) == (model_n_docs > 1)`.
 
+## Layout
+
+```
+app.py                      registers two blueprints, serves / and /dashboard
+app.yaml                    Databricks Apps config (env + resources)
+src/core/       config.py   ONE Config: fq(), volume_path(), every volume NAME
+                db.py       SQL Warehouse access (SDK StatementExecution)
+                volumes.py  UC Volume access (SDK Files API)
+                auth.py     caller identity + can_operate() (the roles hook)
+                http.py     shared request validation
+src/pipeline/   routes.py   /api/*  — batches, jobs, gate, errors, sftp, review
+                queries.py  thin SELECTs over the shared sql/views.sql
+                actions.py  mutations, each one an audited pipeline_events row
+                jobs.py     job_ingest / job_deliver launch + poll
+                gate.py     the annotation gate
+src/annotate/   routes.py   /api/annotate/* — worklist, page JPEGs, save
+                annotation.py  worklist, model lookup, page render, GT, eval
+                evaluation.py  boundary metrics (pure, unit-tested)
+templates/      control_tower.html   the SPA shell (8 tabs)
+                dashboard.html       standalone export page
+static/         css/control_tower.css   one theme, light + dark
+                js/control_tower.js     shell: tabs, setDay, polling
+                js/annotate.js          the annotate tab (IIFE)
+                js/dashboard.js         stats + PNG/HTML export
+sql/            table DDL + the shared v_* views
+algorithm-prod/ the Databricks notebooks (see JOBS.md)
+```
+
 ## Setup
 
-1. **Create the table** (once): run [sql/ddl_evaluation_results.sql](sql/ddl_evaluation_results.sql)
-   in a SQL editor or notebook.
-2. **Configure** [app.yaml](app.yaml): set `DATABRICKS_WAREHOUSE_ID` and, if different,
-   `UC_CATALOG` / `UC_SCHEMA`.
+1. **Create the tables** (once): run `sql/ddl_prod_schema.sql` first, then
+   `sql/ddl_pipeline_events.sql`, `sql/ddl_evaluation_results.sql`, `sql/views.sql`.
+2. **Configure** [app.yaml](app.yaml): `DATABRICKS_WAREHOUSE_ID`, `UC_CATALOG` /
+   `UC_SCHEMA`, `JOB_INGEST_ID`, `JOB_DELIVER_ID`, `DASHBOARD_ACTOR`.
 3. **Grant the app's service principal**:
    - `CAN_USE` on the SQL Warehouse,
-   - `SELECT` on `split_results`, `INSERT` on `evaluation_results`,
-   - `READ VOLUME` on `validation/`, `READ/WRITE VOLUME` on `ground_truth/`.
-4. **Deploy**: `databricks apps deploy` (or via the Apps UI pointing at this folder).
+   - `SELECT` on the pipeline tables, `INSERT`/`UPDATE` where the app writes,
+   - `READ VOLUME` on `inbox/` `validation/` `archive/`, `READ/WRITE VOLUME` on `ground_truth/`,
+   - **`CAN_MANAGE_RUN` on `job_ingest` and `job_deliver`** — the app launches
+     them as itself, not as you.
+4. **Deploy**: `databricks apps deploy` (or the Apps UI pointing at this folder).
 
-## Local development / testing
-
-Run the app against the workspace (the Databricks SDK auto-authenticates from a
-`DATABRICKS` profile / env vars):
+## Local development
 
 ```bash
 export DATABRICKS_HOST=https://<workspace>.azuredatabricks.net
 export DATABRICKS_TOKEN=<pat>
 export DATABRICKS_WAREHOUSE_ID=<warehouse-id>
-python app.py            # http://localhost:8000
+python app.py            # http://127.0.0.1:8000
 ```
 
-## Layout
-
-```
-app.py                          Flask routes (production)
-app.yaml                        Databricks Apps config
-requirements.txt
-src/config.py                   env-driven config
-src/db.py                       SQL Warehouse access (SDK StatementExecution)
-src/volumes.py                  UC Volume access (SDK Files API)
-src/evaluation.py               boundary metrics + dashboard aggregate (pure, unit-testable)
-src/annotation.py               worklist, model lookup, page render, GT persistence, eval, stats
-templates/index.html            annotation UI
-templates/dashboard.html        evaluation dashboard
-static/js/app.js                lazy image viewer + annotation logic
-static/js/dashboard.js          stats render + PNG/HTML export
-static/vendor/html2canvas.min.js  vendored (PNG export, no CDN)
-static/css/style.css            monochrome theme
-sql/ddl_evaluation_results.sql  table DDL
-```
+`python -m pytest tests/` (or `python tests/test_evaluation.py`) covers the
+boundary metrics.
 
 ## Notes / future work
 
-- **Types per document** (Invoice/AWB/…) — schema already carries a `type` slot.
-- **Concurrency**: GT files are keyed by filename; last save wins. Fine for a small
-  review team; add optimistic locking if multiple reviewers share one file.
-- Pages render server-side to JPEG (`PAGE_ZOOM`/`JPEG_QUALITY` in `src/annotation.py`)
-  and the browser lazy-loads only visible pages. The in-process PDF cache is
-  per-worker (bounded); fine for single-reviewer use.
+- **Roles**: `src/core/auth.can_operate()` returns `True` today and gates the four
+  mutating pipeline routes. Set `OPERATOR_EMAILS` and flip its one-line body to
+  restrict job launching to operators; annotation stays open.
+- **Types per document** (Invoice/AWB/…) — the schema already carries a `type` slot.
+- **Concurrency**: GT files are keyed by `(day_id, filename)`; last save wins.
+  Fine for a small review team; add optimistic locking if reviewers share a file.
+- Page rendering (`PAGE_ZOOM` / `JPEG_QUALITY` in `src/annotate/annotation.py`)
+  keeps a bounded per-worker PDF cache. It is not thread-safe — safe under
+  gunicorn's sync workers, but `--threads` would need a render lock first.

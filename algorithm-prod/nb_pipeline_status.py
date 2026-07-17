@@ -15,8 +15,8 @@
 # Thin wrapper over the shared SQL views (sql/views.sql) — the same
 # definitions the control-tower app reads. Optional day_id widget
 # focuses on one batch; empty = all batches.
-# The control tower (pipeline-dashboard/) supersedes this notebook for
-# day-to-day operations; this stays as an in-workspace quick check.
+# The control tower (the web app at the repo root) supersedes this notebook
+# for day-to-day operations; this stays as an in-workspace quick check.
 # CATALOG / SCHEMA / volume_paths come from nb_helpers — never redefined here.
 # ══════════════════════════════════════════════════════════════════════
 

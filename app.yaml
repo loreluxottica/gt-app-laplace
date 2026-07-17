@@ -1,11 +1,12 @@
 # Databricks Apps configuration
 # Docs: https://docs.databricks.com/dev-tools/databricks-apps/
 #
-# The app runs as a service principal; the Databricks SDK auto-authenticates
-# from the injected OAuth credentials. You only need to supply the SQL Warehouse
-# the app should use for table reads/writes, plus the UC catalog/schema.
+# One app serves both halves: the control tower and the ground-truth annotator.
+# It runs as a service principal; the Databricks SDK auto-authenticates from the
+# injected OAuth credentials. Supply the SQL Warehouse, the UC catalog/schema,
+# and the two job ids the control tower launches.
 
-command: ["gunicorn", "app:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"]
+command: ["gunicorn", "app:app", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]
 
 env:
   # SQL Warehouse used for StatementExecution (tables). Set to your warehouse id.
@@ -18,15 +19,54 @@ env:
   - name: UC_SCHEMA
     value: "multidocument-prod"
 
-  # Volume sub-paths (under /Volumes/{catalog}/{schema}/)
+  # Volume names (under /Volumes/{catalog}/{schema}/). Every reader and writer
+  # resolves these through src/core/config.py — never hardcode one elsewhere, or
+  # a rename desyncs the annotator from the gate.
+  - name: INBOX_VOLUME
+    value: "inbox"
   - name: VALIDATION_VOLUME
     value: "validation"
   - name: GROUND_TRUTH_VOLUME
     value: "ground_truth"
+  - name: ARCHIVE_VOLUME
+    value: "archive"
+  - name: OVERSIZED_VOLUME
+    value: "oversized"
+  - name: QUARANTINE_VOLUME
+    value: "quarantine"
 
-# Optionally declare the warehouse as a resource so the app SP gets CAN_USE grant:
+  # Databricks Jobs launched from the control tower. Without these, run-ingest /
+  # run-deliver return a clear error instead of doing anything.
+  - name: JOB_INGEST_ID
+    value: "REPLACE_WITH_JOB_INGEST_ID"
+  - name: JOB_DELIVER_ID
+    value: "REPLACE_WITH_JOB_DELIVER_ID"
+
+  # Fallback actor for pipeline_events when X-Forwarded-Email is absent. Set it:
+  # otherwise events are attributed to the container's OS username, which looks
+  # plausible enough that nobody questions it.
+  - name: DASHBOARD_ACTOR
+    value: "REPLACE_WITH_OWNER_EMAIL"
+
+  # Restrict who may launch jobs / mutate pipeline state (comma-separated emails).
+  # Empty = everyone. Requires flipping the one-line body of core/auth.can_operate().
+  # - name: OPERATOR_EMAILS
+  #   value: "lorenzo.muscillo@luxottica.com"
+
+# Declare the resources the app's service principal needs. The jobs matter now
+# that the tower is deployed rather than run locally under a personal token:
+# run_now() executes as the SP, so without CAN_MANAGE_RUN the launch fails with a
+# generic 500 in the UI.
 # resources:
 #   - name: sql-warehouse
 #     sql_warehouse:
 #       id: REPLACE_WITH_WAREHOUSE_ID
 #       permission: CAN_USE
+#   - name: job-ingest
+#     job:
+#       id: REPLACE_WITH_JOB_INGEST_ID
+#       permission: CAN_MANAGE_RUN
+#   - name: job-deliver
+#     job:
+#       id: REPLACE_WITH_JOB_DELIVER_ID
+#       permission: CAN_MANAGE_RUN
