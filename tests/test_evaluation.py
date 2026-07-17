@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.evaluation import evaluate
+from src.annotate.evaluation import evaluate
 
 
 def test_exact_match():

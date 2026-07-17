@@ -20,8 +20,8 @@ import re
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from src.config import config
-from src import annotation
+from src.core.config import config
+from src.annotate import annotation
 
 app = Flask(__name__)
 

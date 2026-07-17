@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 
 import fitz  # PyMuPDF — server-side page rendering
 
-from .config import config
-from .db import get_sql
-from .volumes import get_volumes
+from ..core.config import config
+from ..core.db import get_sql
+from ..core.volumes import get_volumes
 from .evaluation import evaluate, aggregate_stats_grouped
 
 
