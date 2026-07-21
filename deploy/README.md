@@ -42,9 +42,9 @@ Each prints a `job_id`.
 After creating in the UI, export each job's JSON back over these files so the repo
 stays the source of truth (`databricks jobs get <id>` → the `settings` block).
 
-Record both job ids here once created:
-- job_ingest  = `________`
-- job_deliver = `________`
+Job ids (created 2026-07-21):
+- job_ingest  = `909853340536600`
+- job_deliver = `775787615266557`
 
 ## 3. Bind the jobs to the app (UI, then repo)
 
