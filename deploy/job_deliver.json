@@ -1,0 +1,27 @@
+{
+  "name": "job_deliver",
+  "max_concurrent_runs": 1,
+  "queue": { "enabled": true },
+  "parameters": [
+    { "name": "run_id", "default": "{{job.run_id}}" },
+    { "name": "day_id", "default": "" },
+    { "name": "sftp_remote_base", "default": "" }
+  ],
+  "tasks": [
+    {
+      "task_key": "pdf_split",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Repos/lorenzo.muscillo@luxottica.com/gt-app-laplace/algorithm-prod/nb_pdf_split",
+        "source": "WORKSPACE"
+      }
+    },
+    {
+      "task_key": "sftp_upload",
+      "depends_on": [ { "task_key": "pdf_split" } ],
+      "notebook_task": {
+        "notebook_path": "/Workspace/Repos/lorenzo.muscillo@luxottica.com/gt-app-laplace/algorithm-prod/nb_sftp_upload",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}
