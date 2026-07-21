@@ -5,6 +5,7 @@ evaluation logic into the operations the Flask routes call.
 """
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from datetime import datetime, timezone
 
@@ -324,15 +325,27 @@ def _to_bool(v):
 
 
 def _parse_int_array(v) -> list[int]:
-    """StatementExecution returns ARRAY<INT> as a JSON-ish string like '[1,5,9]'."""
+    """StatementExecution returns ARRAY<INT> as a JSON-ish string — sometimes with
+    quoted elements ('["1","5"]'), sometimes bare ('[1, 5]'). Coerce every element
+    through int() so a quoted element never crashes with `int('"1"')`."""
     if v is None:
         return []
     if isinstance(v, list):
         return [int(x) for x in v]
-    s = str(v).strip().lstrip("[").rstrip("]")
+    s = str(v).strip()
     if not s:
         return []
-    return [int(x.strip()) for x in s.split(",") if x.strip()]
+    try:
+        parsed = json.loads(s)
+        if isinstance(parsed, list):
+            return [int(x) for x in parsed]
+    except (ValueError, TypeError):
+        pass
+    # Fallback for non-JSON serialisations: strip brackets + per-element quotes.
+    s = s.lstrip("[").rstrip("]")
+    if not s:
+        return []
+    return [int(x.strip().strip('"').strip("'")) for x in s.split(",") if x.strip()]
 
 
 def _int_array_literal(arr: list[int]) -> str:
