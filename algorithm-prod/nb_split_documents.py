@@ -1012,6 +1012,15 @@ df_results.write.format("delta").mode("overwrite").save(f"{TMP_BASE}/final_resul
 df_results_mat = spark.read.format("delta").load(f"{TMP_BASE}/final_results")
 
 n_results = df_results_mat.count()
+# Delete-before-append: a rerun (or a run that reached this write, failed
+# downstream, and was retried) must not stack a second prediction row per file —
+# that fans out v_file_status and doubles every funnel count. Same guard as
+# page_signals / package_summaries above.
+spark.sql(f"""
+    DELETE FROM {TABLE_SPLIT_RESULTS}
+    WHERE day_id = '{DAY_ID}'
+      AND filename IN (SELECT filename FROM parsed_docs)
+""")
 df_results_mat.write.format("delta").mode("append").saveAsTable(
     f"`{CATALOG}`.`{SCHEMA}`.`split_results`"
 )

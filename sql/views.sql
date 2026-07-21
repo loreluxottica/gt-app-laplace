@@ -37,7 +37,19 @@ SELECT
   s.needs_review, s.boundary_source, s.n_documents, s.model_used,
   s.predicted_starts
 FROM ranked l
-LEFT JOIN split_results s
+-- Dedup split_results to the latest row per (day_id, filename): a non-idempotent
+-- rerun can leave >1 prediction row per file, and a raw join would fan v_funnel's
+-- counts out (100 files → 200). srn=1 keeps the join strictly 1:1.
+LEFT JOIN (
+  SELECT * FROM (
+    SELECT s.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY day_id, filename
+        ORDER BY processing_timestamp DESC
+      ) AS srn
+    FROM split_results s
+  ) WHERE srn = 1
+) s
   ON s.day_id = l.day_id AND s.filename = l.filename
 WHERE l.rn = 1;
 
