@@ -164,13 +164,18 @@ WHERE
 -- v_sftp_board — delivery completeness per (day_id, folder_id).
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW v_sftp_board AS
+-- Counts are in PHYSICAL PDF units, not packages: each package (one row here)
+-- produces n_documents split PDFs under {base}/{folder_id}/, and every PDF of a
+-- package shares that package's delivery status. Weighting each package by
+-- n_documents makes n_files = split PDFs in the folder and keeps the status
+-- columns reconciling (delivered + pending + failed + deferred = n_files).
 SELECT
   day_id, folder_id,
-  COUNT(*) AS n_files,
-  SUM(CASE WHEN sftp_delivery_status = 'delivered' THEN 1 ELSE 0 END) AS n_delivered,
-  SUM(CASE WHEN sftp_delivery_status = 'pending'   THEN 1 ELSE 0 END) AS n_pending,
-  SUM(CASE WHEN sftp_delivery_status = 'failed'    THEN 1 ELSE 0 END) AS n_failed,
-  SUM(CASE WHEN sftp_delivery_status = 'deferred'  THEN 1 ELSE 0 END) AS n_deferred,
+  SUM(COALESCE(n_documents, 0)) AS n_files,
+  SUM(CASE WHEN sftp_delivery_status = 'delivered' THEN COALESCE(n_documents, 0) ELSE 0 END) AS n_delivered,
+  SUM(CASE WHEN sftp_delivery_status = 'pending'   THEN COALESCE(n_documents, 0) ELSE 0 END) AS n_pending,
+  SUM(CASE WHEN sftp_delivery_status = 'failed'    THEN COALESCE(n_documents, 0) ELSE 0 END) AS n_failed,
+  SUM(CASE WHEN sftp_delivery_status = 'deferred'  THEN COALESCE(n_documents, 0) ELSE 0 END) AS n_deferred,
   MAX(sftp_delivered_at) AS last_delivered_at,
   MAX(sftp_target_folder) AS sftp_target_folder
 FROM v_file_status
