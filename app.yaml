@@ -9,9 +9,11 @@
 command: ["gunicorn", "app:app", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]
 
 env:
-  # SQL Warehouse used for StatementExecution (tables). Set to your warehouse id.
+  # SQL Warehouse used for StatementExecution (tables). Bound to the `sql-warehouse`
+  # resource below — the concrete id is set in the Apps UI (App resources), never
+  # hardcoded here. Binding the resource also auto-grants the SP CAN_USE.
   - name: DATABRICKS_WAREHOUSE_ID
-    value: "REPLACE_WITH_WAREHOUSE_ID"
+    valueFrom: sql-warehouse
 
   # Unity Catalog location
   - name: UC_CATALOG
