@@ -37,12 +37,15 @@ env:
   - name: QUARANTINE_VOLUME
     value: "quarantine"
 
-  # Databricks Jobs launched from the control tower. Without these, run-ingest /
-  # run-deliver return a clear error instead of doing anything.
-  - name: JOB_INGEST_ID
-    value: "REPLACE_WITH_JOB_INGEST_ID"
-  - name: JOB_DELIVER_ID
-    value: "REPLACE_WITH_JOB_DELIVER_ID"
+  # Databricks Jobs launched from the control tower. Not set yet — the jobs don't
+  # exist on the workspace. Until then run-ingest / run-deliver return a clean
+  # "not set" error (a non-numeric value is treated as unset in core/config.py).
+  # Once created, bind each as a `job` resource in the Apps UI and switch to
+  # valueFrom (CAN_MANAGE_RUN auto-granted) — never a hardcoded id.
+  # - name: JOB_INGEST_ID
+  #   valueFrom: job-ingest
+  # - name: JOB_DELIVER_ID
+  #   valueFrom: job-deliver
 
   # Fallback actor for pipeline_events when X-Forwarded-Email is absent. Set it:
   # otherwise events are attributed to the container's OS username, which looks

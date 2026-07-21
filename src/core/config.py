@@ -14,6 +14,14 @@ def _csv(name: str) -> list[str]:
     return [s.strip().lower() for s in os.environ.get(name, "").split(",") if s.strip()]
 
 
+def _job_id(name: str) -> str:
+    """Env job id, but only if it's all digits; else '' (treated as unset).
+    A stray app.yaml placeholder must degrade to the clean 'not set' guard in
+    src/pipeline/jobs.py, never a raw int() traceback."""
+    v = os.environ.get(name, "").strip()
+    return v if v.isdigit() else ""
+
+
 class Config:
     # ── Unity Catalog ──────────────────────────────────────────────────────
     CATALOG = os.environ.get("UC_CATALOG", "sbx-logistics")
@@ -23,8 +31,8 @@ class Config:
     WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
 
     # ── Databricks Jobs (set after creating job_ingest / job_deliver) ──────
-    JOB_INGEST_ID = os.environ.get("JOB_INGEST_ID", "")
-    JOB_DELIVER_ID = os.environ.get("JOB_DELIVER_ID", "")
+    JOB_INGEST_ID = _job_id("JOB_INGEST_ID")
+    JOB_DELIVER_ID = _job_id("JOB_DELIVER_ID")
 
     # ── Identity ───────────────────────────────────────────────────────────
     # In Databricks Apps the calling user's email arrives in this header.
