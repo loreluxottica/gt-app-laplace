@@ -210,9 +210,15 @@ async function loadFlow() {
   const n = (x) => parseInt(x || 0, 10);
 
   const counts = {
+    // processing status and delivery status are ORTHOGONAL axes: a file keeps
+    // status='done' all through delivery (n_predicted), while its sftp status
+    // advances (n_sftp_pending/delivered/…). So a delivering file is already in
+    // n_predicted — re-adding the delivery buckets here double-counts it (100
+    // files showed 200 while deliver ran). The split/delivered circles live on
+    // the delivery axis alone, so they stay as-is.
     inbox: v.inbox ?? 0,
-    parsed: n(f.n_parsed) + n(f.n_predicted) + n(f.n_sftp_pending) + n(f.n_delivered) + n(f.n_sftp_failed) + n(f.n_deferred),
-    predicted: n(f.n_predicted) + n(f.n_sftp_pending) + n(f.n_delivered) + n(f.n_sftp_failed) + n(f.n_deferred),
+    parsed: n(f.n_parsed) + n(f.n_predicted),
+    predicted: n(f.n_predicted),
     gate: g.n_annotated ?? 0,
     split: n(f.n_sftp_pending) + n(f.n_delivered) + n(f.n_sftp_failed) + n(f.n_deferred),
     delivered: n(f.n_delivered),
